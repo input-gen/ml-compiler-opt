@@ -26,7 +26,7 @@ import subprocess
 import ctypes
 import math
 import pprint
-from typing import Dict, Tuple, BinaryIO, Union, List
+from typing import Dict, Tuple, BinaryIO, Union, List, Optional
 
 import gin
 import tensorflow as tf
@@ -79,7 +79,12 @@ def make_response_for_factor(factor: int):
 class UnrollDecisionResult:
     factor: int
     action: bool
-    runtime: float
+    module: bytes
+
+@dataclasses.dataclass(frozen=True)
+class UnrollDecisionRuntime:
+    factor: int
+    runtime: Optional[float]
 
 @dataclasses.dataclass(frozen=True)
 class UnrollDecision:
@@ -137,9 +142,6 @@ class UnrollCompilerHost:
         fc.readline()
         return action
 
-    def get_runtime(self, module):
-        return random.uniform(0.6, 1.6)
-
     def handle_module(
             self,
             mod,
@@ -178,8 +180,8 @@ class UnrollCompilerHost:
                         lambda index, tensor, heuristic: make_response_for_factor(factor) if index == decision else make_response_for_factor(heuristic)
                     )
                     decision_results.append(
-                        UnrollDecisionResult(factor, self.cur_action, self.get_runtime(out_module)))
-                results.append(UnrollDecision(self.features[decision], decision_results))
+                        UnrollDecisionResult(factor, self.cur_action, out_module))
+                results.append(get_ud_sample(UnrollDecision(self.features[decision], decision_results)))
         finally:
             logging.debug(f"Closing pipes")
             os.unlink(self.to_compiler)
@@ -283,6 +285,37 @@ class InliningRunner(compilation_runner.CompilationRunner):
       workdir: str) -> Dict[str, Tuple[tf.train.SequenceExample, float]]:
     ...
 
+def get_module_runtime(module):
+    return random.uniform(0.1, 1.1)
+
+def get_udr_runtime(udr: UnrollDecisionResult):
+    if udr.action:
+        return UnrollDecisionRuntime(udr.factor, None)
+    else:
+        return UnrollDecisionRuntime(udr.factor, get_module_runtime(udr.module))
+
+def get_ud_sample(ud: UnrollDecision):
+    x = ud.features
+    y = [None for _ in range(ADVICE_TENSOR_LEN)]
+    base_runtime = None
+    for udr in ud.results:
+        udrt = get_udr_runtime(udr)
+        if udrt.factor == 1:
+            base_runtime = udrt.runtime
+        else:
+            assert udrt.factor >= 2
+            y[udrt.factor - UNROLL_FACTOR_OFFSET] = udrt.runtime
+
+    # If none of the factors succeeded.
+    if all(el is None for el in y):
+        return None
+
+    # Obtain speedup factors for all factors.
+    # Encode failure to unroll as speedup of 0.0.
+    y = [base_runtime / el if el is not None else 0.0 for el in y]
+
+    return (x, y)
+
 
 def parse_args_and_run():
     parser = argparse.ArgumentParser(
@@ -302,7 +335,8 @@ def main(args):
     with open(args.module, 'rb') as f, \
          tempfile.TemporaryDirectory(dir=args.temp_dir) as tmpdir:
         mod = f.read()
-        UnrollCompilerHost().handle_module(mod, tmpdir)
+        decision_results = UnrollCompilerHost().handle_module(mod, tmpdir)
+
 
 
 if __name__ == "__main__":
