@@ -15,6 +15,7 @@
 """Module for collect data of unroll runtime effect"""
 
 import os
+import random
 import io
 import sys
 import argparse
@@ -33,6 +34,8 @@ import tensorflow as tf
 from compiler_opt.rl import compilation_runner
 from compiler_opt.rl import corpus
 from compiler_opt.rl import log_reader
+
+from absl import logging
 
 _DEFAULT_IDENTIFIER = 'default'
 
@@ -85,7 +88,7 @@ class UnrollDecision:
 
 class UnrollCompilerHost:
     def __init__(self):
-        self.cur_decision = 0
+        cur_decision = 0
         self.cur_action = None
 
         self.num_decisions = None
@@ -96,19 +99,23 @@ class UnrollCompilerHost:
         self.tensor_mode = 'numpy'
         #self.tensor_mode = 'TensorValue'
 
+        self.channel_base = None
+        self.to_compiler = None
+        self.from_compiler = None
+
     def on_features_collect(self, index, tensor_values):
         if self.tensor_mode == 'numpy':
             tensor_values = [tv.to_numpy() for tv in tensor_values]
         self.features.append(tensor_values)
 
     def on_heuristic_print(self, index, heuristic):
-        print(heuristic)
+        logging.debug(heuristic)
 
     def on_action_print(self, index, action):
-        print(action)
+        logging.debug(action)
 
     def on_action_save(self, index, action):
-        print(f'Saving action {action}')
+        logging.debug(f'Saving action {action}')
         self.cur_action = action
 
     def get_replaced_response(self, heuristic, index, factor):
@@ -116,7 +123,7 @@ class UnrollCompilerHost:
 
     def read_heuristic(self, fc):
         event = json.loads(fc.readline())
-        print(event)
+        logging.debug(event)
         assert 'heuristic' in event
         heuristic = int.from_bytes(fc.read(8))
         fc.readline()
@@ -124,136 +131,136 @@ class UnrollCompilerHost:
 
     def read_action(self, fc):
         event = json.loads(fc.readline())
-        print(event)
+        logging.debug(event)
         assert 'action' in event
         action = bool(int.from_bytes(fc.read(1)))
         fc.readline()
         return action
 
     def get_runtime(self, module):
-        return None
+        return random.uniform(0.6, 1.6)
 
     def handle_module(
             self,
             mod,
             working_dir: str):
-        self.compile_once(
-            mod, working_dir,
-            self.on_features_collect,
-            self.on_heuristic_print,
-            self.on_action_print,
-            lambda index, tensor, heuristic: make_response_for_factor(heuristic)
-        )
-        self.num_decisions = self.cur_decision
-
-        print(f'Found {self.num_decisions} decisions to make')
-        print(f'Collected features:{self.features}')
 
         results = []
 
-        for decision in range(self.num_decisions):
-            decision_results = []
-            # From factor = 1 (i.e. no unroll) to MAX_UNROLL_FACTOR inclusive
-            for factor in range(1, MAX_UNROLL_FACTOR + 1):
-                out_module = self.compile_once(
-                    mod, working_dir,
-                    lambda index, features: (),
-                    lambda index, heuristic: (),
-                    lambda index, action: self.on_action_save(index, action) if index == decision else self.on_action_print(index, action),
-                    lambda index, tensor, heuristic: make_response_for_factor(factor) if index == decision else make_response_for_factor(heuristic)
-                )
-                decision_results.append(
-                    UnrollDecisionResult(factor, self.cur_action, self.get_runtime(out_module)))
-            results.append(UnrollDecision(self.features[decision], decision_results))
+        self.channel_base = os.path.join(working_dir, 'channel')
+        self.to_compiler = self.channel_base + ".in"
+        self.from_compiler = self.channel_base + ".out"
+        try:
+            logging.debug(f"Opening pipes {self.to_compiler} and {self.from_compiler}")
+            os.mkfifo(self.to_compiler, 0o666)
+            os.mkfifo(self.from_compiler, 0o666)
 
+            self.num_decisions, _ = self.compile_once(
+                mod,
+                self.on_features_collect,
+                self.on_heuristic_print,
+                self.on_action_print,
+                lambda index, tensor, heuristic: make_response_for_factor(heuristic)
+               )
 
-        print('Got results:')
-        pprint.pp(results)
-        # print(*results, sep='\n')
+            logging.debug(f'Found {self.num_decisions} decisions to make')
+            logging.debug(f'Collected features:{self.features}')
+
+            for decision in range(self.num_decisions):
+                decision_results = []
+                # From factor = 1 (i.e. no unroll) to MAX_UNROLL_FACTOR inclusive
+                for factor in range(1, MAX_UNROLL_FACTOR + 1):
+                    _, out_module = self.compile_once(
+                        mod,
+                        lambda index, features: (),
+                        lambda index, heuristic: (),
+                        lambda index, action: self.on_action_save(index, action) if index == decision else self.on_action_print(index, action),
+                        lambda index, tensor, heuristic: make_response_for_factor(factor) if index == decision else make_response_for_factor(heuristic)
+                    )
+                    decision_results.append(
+                        UnrollDecisionResult(factor, self.cur_action, self.get_runtime(out_module)))
+                results.append(UnrollDecision(self.features[decision], decision_results))
+        finally:
+            logging.debug(f"Closing pipes")
+            os.unlink(self.to_compiler)
+            os.unlink(self.from_compiler)
+
+        logging.debug('Got results:')
+        logging.debug(pprint.pformat(results))
+        return results
 
     def compile_once(
             self,
             mod,
-            working_dir: str,
             on_features,
             on_heuristic,
             on_action,
             get_response):
 
-        self.cur_decision = 0
-
-        temp_rootname = os.path.join(working_dir, 'channel')
+        cur_decision = 0
 
         # TODO we should specify the opt program or command line outside of this
         process_and_args = [
             'opt',
             '-O3',
-            f'--mlgo-loop-unroll-interactive-channel-base={temp_rootname}',
+            f'--mlgo-loop-unroll-interactive-channel-base={self.channel_base}',
             '--mlgo-loop-unroll-advisor-mode=development',
         ]
 
-        to_compiler = temp_rootname + ".in"
-        from_compiler = temp_rootname + ".out"
-        print(f"Opening pipes {to_compiler} and {from_compiler}")
-        try:
-            os.mkfifo(to_compiler, 0o666)
-            os.mkfifo(from_compiler, 0o666)
-            print(f"Launching compiler {process_and_args}")
-            compiler_proc = subprocess.Popen(
-                process_and_args, stderr=subprocess.PIPE,
-                # TODO we want to pipe our output module and return it
-                stdout=subprocess.DEVNULL,
-                stdin=subprocess.PIPE
-            )
-            print(f"Sending module")
-            compiler_proc.stdin.write(mod)
-            # FIXME is this the proper way to close the pipe? if we don't set it to
-            # None then the communicate call will try to close it again and raise an
-            # error
-            compiler_proc.stdin.close()
-            compiler_proc.stdin = None
-            print(f"Starting communication")
-            with io.BufferedWriter(io.FileIO(to_compiler, "wb")) as tc, \
-                 io.BufferedReader(io.FileIO(from_compiler, "rb")) as fc:
-                header = log_reader._read_header(fc)
-                tensor_specs = header.features
-                advice_spec = header.advice
-                context = None
-                while compiler_proc.poll() is None:
-                    next_event = fc.readline()
-                    if not next_event:
-                        break
-                    (
-                        last_context,
-                        observation_id,
-                        features,
-                        _,
-                    ) = log_reader.read_one_observation(
-                        context, next_event, fc, tensor_specs, None
-                    )
-                    if last_context != context:
-                        print(f"context: {last_context}")
-                    context = last_context
-                    print(f"observation: {observation_id}")
-                    tensor_values = []
-                    for fv in features:
-                        print(fv.to_numpy())
-                        tensor_values.append(fv)
-                    on_features(self.cur_decision, tensor_values)
-                    heuristic = self.read_heuristic(fc)
-                    on_heuristic(self.cur_decision, heuristic)
-                    send(tc, get_response(self.cur_decision, tensor_values, heuristic), advice_spec)
-                    on_action(self.cur_decision, self.read_action(fc))
-                    self.cur_decision += 1
-            _, err = compiler_proc.communicate()
-            print(err.decode("utf-8"))
-            compiler_proc.wait()
+        logging.debug(f"Launching compiler {process_and_args}")
+        compiler_proc = subprocess.Popen(
+            process_and_args, stderr=subprocess.PIPE,
+            # TODO we want to pipe our output module and return it
+            stdout=subprocess.PIPE,
+            stdin=subprocess.PIPE
+        )
+        logging.debug(f"Sending module")
+        compiler_proc.stdin.write(mod)
+        # FIXME is this the proper way to close the pipe? if we don't set it to
+        # None then the communicate call will try to close it again and raise an
+        # error
+        compiler_proc.stdin.close()
+        compiler_proc.stdin = None
+        logging.debug(f"Starting communication")
+        with io.BufferedWriter(io.FileIO(self.to_compiler, "wb")) as tc, \
+             io.BufferedReader(io.FileIO(self.from_compiler, "rb")) as fc:
+            header = log_reader._read_header(fc)
+            tensor_specs = header.features
+            advice_spec = header.advice
+            context = None
+            while compiler_proc.poll() is None:
+                next_event = fc.readline()
+                if not next_event:
+                    break
+                (
+                    last_context,
+                    observation_id,
+                    features,
+                    _,
+                ) = log_reader.read_one_observation(
+                    context, next_event, fc, tensor_specs, None
+                )
+                if last_context != context:
+                    logging.debug(f"context: {last_context}")
+                context = last_context
+                logging.debug(f"observation: {observation_id}")
+                tensor_values = []
+                for fv in features:
+                    logging.debug(fv.to_numpy())
+                    tensor_values.append(fv)
+                on_features(cur_decision, tensor_values)
+                heuristic = self.read_heuristic(fc)
+                on_heuristic(cur_decision, heuristic)
+                send(tc, get_response(cur_decision, tensor_values, heuristic), advice_spec)
+                on_action(cur_decision, self.read_action(fc))
+                cur_decision += 1
+        outs, errs = compiler_proc.communicate()
+        logging.debug("Errs")
+        logging.debug(errs.decode("utf-8"))
+        logging.debug(f"Outs size {len(outs)}")
+        compiler_proc.wait()
 
-        finally:
-            os.unlink(to_compiler)
-            os.unlink(from_compiler)
-
-        return None
+        return cur_decision, outs
 
 @gin.configurable(module='runners')
 class InliningRunner(compilation_runner.CompilationRunner):
@@ -283,10 +290,15 @@ def parse_args_and_run():
     )
     parser.add_argument('--module', required=True)
     parser.add_argument('--temp-dir', default=None)
+    parser.add_argument('--debug', action='store_true', default=False)
     args = parser.parse_args()
     main(args)
 
 def main(args):
+
+    if args.debug:
+        logging.set_verbosity(logging.DEBUG)
+
     with open(args.module, 'rb') as f, \
          tempfile.TemporaryDirectory(dir=args.temp_dir) as tmpdir:
         mod = f.read()
