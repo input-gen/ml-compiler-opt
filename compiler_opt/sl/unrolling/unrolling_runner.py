@@ -18,6 +18,7 @@ import os
 import io
 import sys
 import argparse
+import dataclasses
 import json
 import tempfile
 import subprocess
@@ -57,10 +58,10 @@ def send(f: BinaryIO, value: Union[int, float], spec: tf.TensorSpec):
     )
     f.flush()
 
+# These need to be kept in sync with the ones in UnrollModelFeatureMaps.h
 MAX_UNROLL_FACTOR = 32
 UNROLL_FACTOR_OFFSET = 2
-
-ADVICE_TENSOR_LEN = MAX_UNROLL_FACTOR - UNROLL_FACTOR_OFFSET
+ADVICE_TENSOR_LEN = 1 + MAX_UNROLL_FACTOR - UNROLL_FACTOR_OFFSET
 
 def make_response_for_factor(factor: int):
     l = [0.5 for _ in range(ADVICE_TENSOR_LEN)]
@@ -70,17 +71,44 @@ def make_response_for_factor(factor: int):
     l[factor - UNROLL_FACTOR_OFFSET] = 2.0
     return l
 
+@dataclasses.dataclass(frozen=True)
+class UnrollDecisionResult:
+    factor: int
+    action: bool
+    runtime: float
+
 
 class UnrollCompilerHost:
     def __init__(self):
+        self.cur_decision = 0
+        self.cur_action = None
+
         self.num_decisions = None
+        self.decisions = None
+
+        self.features = []
+
+    def on_features_collect(self, index, tensor_values):
+        self.features.append(tensor_values)
+
+    def on_heuristic_print(self, index, heuristic):
+        print(heuristic)
+
+    def on_action_print(self, index, action):
+        print(action)
+
+    def on_action_save(self, index, action):
+        print(f'Saving action {action}')
+        self.cur_action = action
+
+    def get_replaced_response(self, heuristic, index, factor):
+        return make_response_for_factor(heuristic)
 
     def read_heuristic(self, fc):
         event = json.loads(fc.readline())
         print(event)
         assert 'heuristic' in event
         heuristic = int.from_bytes(fc.read(8))
-        print(heuristic)
         fc.readline()
         return heuristic
 
@@ -89,14 +117,59 @@ class UnrollCompilerHost:
         print(event)
         assert 'action' in event
         action = bool(int.from_bytes(fc.read(1)))
-        print(action)
         fc.readline()
         return action
+
+    def get_runtime(self, module):
+        return None
 
     def handle_module(
             self,
             mod,
             working_dir: str):
+        self.compile_once(
+            mod, working_dir,
+            self.on_features_collect,
+            self.on_heuristic_print,
+            self.on_action_print,
+            lambda index, tensor, heuristic: make_response_for_factor(heuristic)
+        )
+        self.num_decisions = self.cur_decision
+
+        print(f'Found {self.num_decisions} decisions to make')
+        print(f'Collected features:{self.features}')
+
+        results = []
+
+        for i in range(self.num_decisions):
+            decision_results = []
+            # From factor = 1 (i.e. no unroll) to MAX_UNROLL_FACTOR inclusive
+            for factor in range(1, MAX_UNROLL_FACTOR + 1):
+                out_module = self.compile_once(
+                    mod, working_dir,
+                    lambda index, features: (),
+                    lambda index, heuristic: (),
+                    lambda index, action: self.on_action_save(index, action) if index == i else self.on_action_print(index, action),
+                    lambda index, tensor, heuristic: make_response_for_factor(factor) if index == i else make_response_for_factor(heuristic)
+                )
+                decision_results.append(
+                    UnrollDecisionResult(factor, self.cur_action, self.get_runtime(out_module)))
+            results.append(decision_results)
+
+
+        print('Got results:')
+        print(*results, sep='\n')
+
+    def compile_once(
+            self,
+            mod,
+            working_dir: str,
+            on_features,
+            on_heuristic,
+            on_action,
+            get_response):
+
+        self.cur_decision = 0
 
         temp_rootname = os.path.join(working_dir, 'channel')
 
@@ -117,6 +190,7 @@ class UnrollCompilerHost:
             print(f"Launching compiler {process_and_args}")
             compiler_proc = subprocess.Popen(
                 process_and_args, stderr=subprocess.PIPE,
+                # TODO we want to pipe our output module and return it
                 stdout=subprocess.DEVNULL,
                 stdin=subprocess.PIPE
             )
@@ -154,9 +228,12 @@ class UnrollCompilerHost:
                     for fv in features:
                         print(fv.to_numpy())
                         tensor_values.append(fv)
+                    on_features(self.cur_decision, tensor_values)
                     heuristic = self.read_heuristic(fc)
-                    send(tc, make_response_for_factor(heuristic), advice_spec)
-                    action = self.read_action(fc)
+                    on_heuristic(self.cur_decision, heuristic)
+                    send(tc, get_response(self.cur_decision, tensor_values, heuristic), advice_spec)
+                    on_action(self.cur_decision, self.read_action(fc))
+                    self.cur_decision += 1
             _, err = compiler_proc.communicate()
             print(err.decode("utf-8"))
             compiler_proc.wait()
@@ -164,6 +241,8 @@ class UnrollCompilerHost:
         finally:
             os.unlink(to_compiler)
             os.unlink(from_compiler)
+
+        return None
 
 @gin.configurable(module='runners')
 class InliningRunner(compilation_runner.CompilationRunner):
