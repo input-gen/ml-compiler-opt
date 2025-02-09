@@ -142,12 +142,10 @@ class UnrollCompilerHost:
         fc.readline()
         return action
 
-    def handle_module(
+    def get_unroll_decision_results(
             self,
             mod,
             working_dir: str):
-
-        results = []
 
         self.channel_base = os.path.join(working_dir, 'channel')
         self.to_compiler = self.channel_base + ".in"
@@ -181,15 +179,14 @@ class UnrollCompilerHost:
                     )
                     decision_results.append(
                         UnrollDecisionResult(factor, self.cur_action, out_module))
-                results.append(get_ud_sample(UnrollDecision(self.features[decision], decision_results)))
+                ud = UnrollDecision(self.features[decision], decision_results)
+                logging.debug(pprint.pformat(ud))
+                logging.debug('Got result:')
+                yield ud
         finally:
             logging.debug(f"Closing pipes")
             os.unlink(self.to_compiler)
             os.unlink(self.from_compiler)
-
-        logging.debug('Got results:')
-        logging.debug(pprint.pformat(results))
-        return results
 
     def compile_once(
             self,
@@ -286,13 +283,13 @@ class InliningRunner(compilation_runner.CompilationRunner):
     ...
 
 def get_module_runtime(module):
-    return random.uniform(0.1, 1.1)
+    return random.uniform(1.0, 2.0)
 
 def get_udr_runtime(udr: UnrollDecisionResult):
-    if udr.action:
-        return UnrollDecisionRuntime(udr.factor, None)
-    else:
+    if udr.action or udr.factor == 1:
         return UnrollDecisionRuntime(udr.factor, get_module_runtime(udr.module))
+    else:
+        return UnrollDecisionRuntime(udr.factor, None)
 
 def get_ud_sample(ud: UnrollDecision):
     x = ud.features
@@ -335,7 +332,10 @@ def main(args):
     with open(args.module, 'rb') as f, \
          tempfile.TemporaryDirectory(dir=args.temp_dir) as tmpdir:
         mod = f.read()
-        decision_results = UnrollCompilerHost().handle_module(mod, tmpdir)
+        decision_results = UnrollCompilerHost().get_unroll_decision_results(mod, tmpdir)
+        for ud in decision_results:
+            sample = get_ud_sample(ud)
+            logging.debug(f'Obtained sample {sample}')
 
 
 
