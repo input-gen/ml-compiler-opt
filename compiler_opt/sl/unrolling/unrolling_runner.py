@@ -24,7 +24,8 @@ import tempfile
 import subprocess
 import ctypes
 import math
-from typing import Dict, Tuple, BinaryIO, Union
+import pprint
+from typing import Dict, Tuple, BinaryIO, Union, List
 
 import gin
 import tensorflow as tf
@@ -77,6 +78,10 @@ class UnrollDecisionResult:
     action: bool
     runtime: float
 
+@dataclasses.dataclass(frozen=True)
+class UnrollDecision:
+    features: List
+    results: List[UnrollDecisionResult]
 
 class UnrollCompilerHost:
     def __init__(self):
@@ -88,7 +93,12 @@ class UnrollCompilerHost:
 
         self.features = []
 
+        self.tensor_mode = 'numpy'
+        #self.tensor_mode = 'TensorValue'
+
     def on_features_collect(self, index, tensor_values):
+        if self.tensor_mode == 'numpy':
+            tensor_values = [tv.to_numpy() for tv in tensor_values]
         self.features.append(tensor_values)
 
     def on_heuristic_print(self, index, heuristic):
@@ -141,7 +151,7 @@ class UnrollCompilerHost:
 
         results = []
 
-        for i in range(self.num_decisions):
+        for decision in range(self.num_decisions):
             decision_results = []
             # From factor = 1 (i.e. no unroll) to MAX_UNROLL_FACTOR inclusive
             for factor in range(1, MAX_UNROLL_FACTOR + 1):
@@ -149,16 +159,17 @@ class UnrollCompilerHost:
                     mod, working_dir,
                     lambda index, features: (),
                     lambda index, heuristic: (),
-                    lambda index, action: self.on_action_save(index, action) if index == i else self.on_action_print(index, action),
-                    lambda index, tensor, heuristic: make_response_for_factor(factor) if index == i else make_response_for_factor(heuristic)
+                    lambda index, action: self.on_action_save(index, action) if index == decision else self.on_action_print(index, action),
+                    lambda index, tensor, heuristic: make_response_for_factor(factor) if index == decision else make_response_for_factor(heuristic)
                 )
                 decision_results.append(
                     UnrollDecisionResult(factor, self.cur_action, self.get_runtime(out_module)))
-            results.append(decision_results)
+            results.append(UnrollDecision(self.features[decision], decision_results))
 
 
         print('Got results:')
-        print(*results, sep='\n')
+        pprint.pp(results)
+        # print(*results, sep='\n')
 
     def compile_once(
             self,
