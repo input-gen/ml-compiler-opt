@@ -180,6 +180,9 @@ class UnrollCompilerHost:
                 lambda index, tensor, heuristic: make_response_for_factor(heuristic)
                )
 
+            if self.num_decisions is None:
+                return
+
             logging.debug(f'Found {self.num_decisions} decisions to make')
             logging.debug(f'Collected features: {self.features}')
 
@@ -197,12 +200,19 @@ class UnrollCompilerHost:
                         lambda index: ("__mlgo_unrolled_loop_begin", "__mlgo_unrolled_loop_end") if index == decision else None,
                         lambda index, tensor, heuristic: make_response_for_factor(factor) if index == decision else make_response_for_factor(heuristic)
                     )
+                    if out_module is None:
+                        break
                     decision_results.append(
                         UnrollDecisionResult(factor, self.cur_action, out_module))
-                ud = UnrollDecision(self.features[decision], decision_results)
-                logging.debug(pprint.pformat(ud))
-                logging.debug('Got result:')
-                yield ud
+                else:
+                    # If we did not break the above loop
+                    ud = UnrollDecision(self.features[decision], decision_results)
+                    logging.debug(pprint.pformat(ud))
+                    logging.debug('Got result:')
+                    yield ud
+                    continue
+                break
+
         finally:
             logging.debug(f"Closing pipes")
             os.unlink(self.to_compiler)
@@ -233,17 +243,18 @@ class UnrollCompilerHost:
         logging.debug(f"Launching compiler {' '.join(process_and_args)}")
         compiler_proc = subprocess.Popen(
             process_and_args, stderr=subprocess.PIPE,
-            # TODO we want to pipe our output module and return it
             stdout=subprocess.PIPE,
             stdin=subprocess.PIPE
         )
         logging.debug(f"Sending module")
         compiler_proc.stdin.write(mod)
+
         # FIXME is this the proper way to close the pipe? if we don't set it to
         # None then the communicate call will try to close it again and raise an
         # error
         compiler_proc.stdin.close()
         compiler_proc.stdin = None
+
         logging.debug(f"Starting communication")
         with io.BufferedWriter(io.FileIO(self.to_compiler, "w+b")) as tc:
             with io.BufferedReader(io.FileIO(self.from_compiler, "r+b")) as fc:
