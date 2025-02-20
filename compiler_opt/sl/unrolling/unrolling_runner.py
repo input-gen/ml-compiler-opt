@@ -26,6 +26,7 @@ import subprocess
 import ctypes
 import math
 import pprint
+import fcntl
 from typing import Dict, Tuple, BinaryIO, Union, List, Optional, Iterable
 
 import gin
@@ -244,45 +245,87 @@ class UnrollCompilerHost:
         compiler_proc.stdin.close()
         compiler_proc.stdin = None
         logging.debug(f"Starting communication")
-        with io.BufferedWriter(io.FileIO(self.to_compiler, "wb")) as tc, \
-             io.BufferedReader(io.FileIO(self.from_compiler, "rb")) as fc:
-            header = log_reader._read_header(fc)
-            tensor_specs = header.features
-            advice_spec = header.advice
-            context = None
-            while compiler_proc.poll() is None:
-                next_event = fc.readline()
-                if not next_event:
-                    break
-                (
-                    last_context,
-                    observation_id,
-                    features,
-                    _,
-                ) = log_reader.read_one_observation(
-                    context, next_event, fc, tensor_specs, None
-                )
-                if last_context != context:
-                    logging.debug(f"context: {last_context}")
-                context = last_context
-                logging.debug(f"observation: {observation_id}")
-                tensor_values = []
-                for fv in features:
-                    logging.debug(fv.to_numpy())
-                    tensor_values.append(fv)
+        with io.BufferedWriter(io.FileIO(self.to_compiler, "w+b")) as tc:
+            with io.BufferedReader(io.FileIO(self.from_compiler, "r+b")) as fc:
 
-                on_features(cur_decision, tensor_values)
+                fl = fcntl.fcntl(fc.fileno(), fcntl.F_GETFL)
 
-                heuristic = self.read_heuristic(fc)
-                on_heuristic(cur_decision, heuristic)
+                # We need to set the reading pipe to nonblocking for the purpose
+                # of peek'ing and checking if it is readable without blocking
+                # and watch for the process diyng as well. We rever to blocking
+                # mode for the actual communication.
 
-                send(tc, get_response(cur_decision, tensor_values, heuristic), advice_spec)
+                def set_nonblocking():
+                    fcntl.fcntl(fc.fileno(), fcntl.F_SETFL, fl | os.O_NONBLOCK)
+                def set_blocking():
+                    fcntl.fcntl(fc.fileno(), fcntl.F_SETFL, fl & ~os.O_NONBLOCK)
 
-                on_action(cur_decision, self.read_action(fc))
+                def input_available():
+                    if len(fc.peek(1)) > 0:
+                        return "yes"
+                    if compiler_proc.poll() is not None:
+                        return "dead"
+                    return "no"
 
-                send_instrument_response(tc, get_instrument_response(cur_decision))
 
-                cur_decision += 1
+                set_nonblocking()
+                while True:
+                    ia = input_available()
+                    if ia == "dead":
+                        return None, None
+                    if ia == "yes":
+                        break
+
+                set_blocking()
+
+                header = log_reader._read_header(fc)
+                tensor_specs = header.features
+                advice_spec = header.advice
+                context = None
+
+                set_nonblocking()
+                while True:
+                    ia = input_available()
+                    if ia == "dead":
+                        break
+                    if ia == "no":
+                        continue
+
+                    set_blocking()
+
+                    next_event = fc.readline()
+                    if not next_event:
+                        break
+                    (
+                        last_context,
+                        observation_id,
+                        features,
+                        _,
+                    ) = log_reader.read_one_observation(
+                        context, next_event, fc, tensor_specs, None
+                    )
+                    if last_context != context:
+                        logging.debug(f"context: {last_context}")
+                    context = last_context
+                    logging.debug(f"observation: {observation_id}")
+                    tensor_values = []
+                    for fv in features:
+                        logging.debug(fv.to_numpy())
+                        tensor_values.append(fv)
+
+                    on_features(cur_decision, tensor_values)
+
+                    heuristic = self.read_heuristic(fc)
+                    on_heuristic(cur_decision, heuristic)
+
+                    send(tc, get_response(cur_decision, tensor_values, heuristic), advice_spec)
+
+                    on_action(cur_decision, self.read_action(fc))
+
+                    send_instrument_response(tc, get_instrument_response(cur_decision))
+
+                    cur_decision += 1
+                    set_nonblocking()
 
         outs, errs = compiler_proc.communicate()
         logging.debug("Errs")
