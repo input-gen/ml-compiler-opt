@@ -244,7 +244,7 @@ class UnrollCompilerHost:
         compiler_proc.stdin.close()
         compiler_proc.stdin = None
         logging.debug(f"Starting communication")
-        with io.BufferedWriter(io.FileIO(self.to_compiler, "wb")) as tc,
+        with io.BufferedWriter(io.FileIO(self.to_compiler, "wb")) as tc, \
              io.BufferedReader(io.FileIO(self.from_compiler, "rb")) as fc:
             header = log_reader._read_header(fc)
             tensor_specs = header.features
