@@ -26,7 +26,7 @@ import subprocess
 import ctypes
 import math
 import pprint
-from typing import Dict, Tuple, BinaryIO, Union, List, Optional
+from typing import Dict, Tuple, BinaryIO, Union, List, Optional, Iterable
 
 import gin
 import tensorflow as tf
@@ -351,6 +351,26 @@ def get_ud_sample(ud: UnrollDecision):
 
     return (x, y)
 
+def get_ud_samples(uds: Iterable[UnrollDecision]):
+    for ud in uds:
+        sample = get_ud_sample(ud)
+        if sample is not None:
+            yield sample
+        else:
+            logging.debug(f'Obtained invalid sample')
+
+def main(args):
+
+    if args.debug:
+        logging.set_verbosity(logging.DEBUG)
+
+    with open(args.module, 'rb') as f, \
+         tempfile.TemporaryDirectory(dir=args.temp_dir) as tmpdir:
+        mod = f.read()
+        decision_results = UnrollCompilerHost(bool(args.emit_assembly)).get_unroll_decision_results(mod, tmpdir)
+
+        for uds in get_ud_samples(decision_results):
+            logging.debug(f'Obtained sample {uds}')
 
 def parse_args_and_run():
     parser = argparse.ArgumentParser(
@@ -362,21 +382,6 @@ def parse_args_and_run():
     parser.add_argument('-S', dest='emit_assembly', action='store_true', default=False)
     args = parser.parse_args()
     main(args)
-
-def main(args):
-
-    if args.debug:
-        logging.set_verbosity(logging.DEBUG)
-
-    with open(args.module, 'rb') as f, \
-         tempfile.TemporaryDirectory(dir=args.temp_dir) as tmpdir:
-        mod = f.read()
-        decision_results = UnrollCompilerHost(bool(args.emit_assembly)).get_unroll_decision_results(mod, tmpdir)
-        for ud in decision_results:
-            sample = get_ud_sample(ud)
-            logging.debug(f'Obtained sample {sample}')
-
-
 
 if __name__ == "__main__":
     parse_args_and_run()
