@@ -39,6 +39,18 @@ from absl import logging
 
 _DEFAULT_IDENTIFIER = 'default'
 
+def send_instrument_response(f: BinaryIO, response: Optional[Tuple[str, str]]):
+    if response is None:
+        f.write(bytes([0]))
+        f.flush()
+    else:
+        f.write(bytes([1]))
+        begin = response[0].encode('ascii') + bytes([0])
+        end = response[1].encode('ascii') + bytes([0])
+        f.write(begin)
+        f.write(end)
+        f.flush()
+
 def send(f: BinaryIO, value: Union[int, float], spec: tf.TensorSpec):
     """Send the `value` - currently just a scalar - formatted as per `spec`."""
 
@@ -92,7 +104,8 @@ class UnrollDecision:
     results: List[UnrollDecisionResult]
 
 class UnrollCompilerHost:
-    def __init__(self):
+    def __init__(self, emit_assembly):
+        self.emit_assembly = emit_assembly
         cur_decision = 0
         self.cur_action = None
 
@@ -128,17 +141,19 @@ class UnrollCompilerHost:
 
     def read_heuristic(self, fc):
         event = json.loads(fc.readline())
-        logging.debug(event)
+        logging.debug('Read' + str(event))
         assert 'heuristic' in event
         heuristic = int.from_bytes(fc.read(8))
+        logging.debug(heuristic)
         fc.readline()
         return heuristic
 
     def read_action(self, fc):
         event = json.loads(fc.readline())
-        logging.debug(event)
+        logging.debug('Read' + str(event))
         assert 'action' in event
         action = bool(int.from_bytes(fc.read(1)))
+        logging.debug(action)
         fc.readline()
         return action
 
@@ -160,21 +175,25 @@ class UnrollCompilerHost:
                 self.on_features_collect,
                 self.on_heuristic_print,
                 self.on_action_print,
+                lambda index: None,
                 lambda index, tensor, heuristic: make_response_for_factor(heuristic)
                )
 
             logging.debug(f'Found {self.num_decisions} decisions to make')
-            logging.debug(f'Collected features:{self.features}')
+            logging.debug(f'Collected features: {self.features}')
 
             for decision in range(self.num_decisions):
+                logging.debug(f'Exploring decision: {decision}')
                 decision_results = []
                 # From factor = 1 (i.e. no unroll) to MAX_UNROLL_FACTOR inclusive
                 for factor in range(1, MAX_UNROLL_FACTOR + 1):
+                    logging.debug(f'Exploring factor: {factor}')
                     _, out_module = self.compile_once(
                         mod,
                         lambda index, features: (),
                         lambda index, heuristic: (),
-                        lambda index, action: self.on_action_save(index, action) if index == decision else self.on_action_print(index, action),
+                        lambda index, action: self.on_action_save(index, action) if index == decision else None,
+                        lambda index: ("__mlgo_unrolled_loop_begin", "__mlgo_unrolled_loop_end") if index == decision else None,
                         lambda index, tensor, heuristic: make_response_for_factor(factor) if index == decision else make_response_for_factor(heuristic)
                     )
                     decision_results.append(
@@ -194,6 +213,7 @@ class UnrollCompilerHost:
             on_features,
             on_heuristic,
             on_action,
+            get_instrument_response,
             get_response):
 
         cur_decision = 0
@@ -204,9 +224,12 @@ class UnrollCompilerHost:
             '-O3',
             f'--mlgo-loop-unroll-interactive-channel-base={self.channel_base}',
             '--mlgo-loop-unroll-advisor-mode=development',
+            '-debug-only=loop-unroll-development-advisor'
         ]
+        if self.emit_assembly:
+            process_and_args.append('-S')
 
-        logging.debug(f"Launching compiler {process_and_args}")
+        logging.debug(f"Launching compiler {' '.join(process_and_args)}")
         compiler_proc = subprocess.Popen(
             process_and_args, stderr=subprocess.PIPE,
             # TODO we want to pipe our output module and return it
@@ -221,7 +244,7 @@ class UnrollCompilerHost:
         compiler_proc.stdin.close()
         compiler_proc.stdin = None
         logging.debug(f"Starting communication")
-        with io.BufferedWriter(io.FileIO(self.to_compiler, "wb")) as tc, \
+        with io.BufferedWriter(io.FileIO(self.to_compiler, "wb")) as tc,
              io.BufferedReader(io.FileIO(self.from_compiler, "rb")) as fc:
             header = log_reader._read_header(fc)
             tensor_specs = header.features
@@ -247,17 +270,31 @@ class UnrollCompilerHost:
                 for fv in features:
                     logging.debug(fv.to_numpy())
                     tensor_values.append(fv)
+
                 on_features(cur_decision, tensor_values)
+
                 heuristic = self.read_heuristic(fc)
                 on_heuristic(cur_decision, heuristic)
+
                 send(tc, get_response(cur_decision, tensor_values, heuristic), advice_spec)
+
                 on_action(cur_decision, self.read_action(fc))
+
+                send_instrument_response(tc, get_instrument_response(cur_decision))
+
                 cur_decision += 1
+
         outs, errs = compiler_proc.communicate()
         logging.debug("Errs")
         logging.debug(errs.decode("utf-8"))
         logging.debug(f"Outs size {len(outs)}")
         compiler_proc.wait()
+
+        if self.emit_assembly:
+            outs = outs.decode("utf-8")
+            logging.debug("Output module:")
+            logging.debug(outs)
+
 
         return cur_decision, outs
 
@@ -283,6 +320,7 @@ class InliningRunner(compilation_runner.CompilationRunner):
     ...
 
 def get_module_runtime(module):
+    # TODO need to hook up input-gen replay here
     return random.uniform(1.0, 2.0)
 
 def get_udr_runtime(udr: UnrollDecisionResult):
@@ -321,6 +359,7 @@ def parse_args_and_run():
     parser.add_argument('--module', required=True)
     parser.add_argument('--temp-dir', default=None)
     parser.add_argument('--debug', action='store_true', default=False)
+    parser.add_argument('-S', dest='emit_assembly', action='store_true', default=False)
     args = parser.parse_args()
     main(args)
 
@@ -332,7 +371,7 @@ def main(args):
     with open(args.module, 'rb') as f, \
          tempfile.TemporaryDirectory(dir=args.temp_dir) as tmpdir:
         mod = f.read()
-        decision_results = UnrollCompilerHost().get_unroll_decision_results(mod, tmpdir)
+        decision_results = UnrollCompilerHost(bool(args.emit_assembly)).get_unroll_decision_results(mod, tmpdir)
         for ud in decision_results:
             sample = get_ud_sample(ud)
             logging.debug(f'Obtained sample {sample}')
