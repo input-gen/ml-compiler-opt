@@ -1,0 +1,33 @@
+#+title: Notes
+
+* Setup
+
+#+begin_src bash
+cd /scr/ivan/src/ml-compiler-opt/
+. enable.sh /scr/ivan/opt/python-3.11.0/
+pip3 install datasets
+pip3 install pipenv
+pipenv sync --system
+TF_PIP=$(python3 -m pip show tensorflow | grep Location | cut -d ' ' -f 2)
+echo $TF_PIP
+export TENSORFLOW_AOT_PATH="${TF_PIP}/tensorflow"
+export TFLITE_PATH=/scr/ivan/src/tflite
+mkdir ${TFLITE_PATH}
+cd ${TFLITE_PATH}
+../ml-compiler-opt/buildbot/build_tflite.sh
+#+end_src
+
+- gemmlowp's lib dir was `lib` in the tflite .cmake, whereas the real one was `lib64`
+- Needed to build this specific python python version with shared libs
+
+#+begin_src bash
+./configure --prefix=/scr/ivan/opt/python-3.11.0-shared --enable-shared
+#+end_src
+
+
+** for llvm build:
+- needed to use a newer cmake in memkf02 - 3.31 worked
+- needed to specify
+#+begin_src bash
+ADDITIONAL_FLAGS="-C /scr/ivan/src/tflite/tflite.cmake -DCMAKE_IGNORE_PATH=/usr/include/eigen3;/usr/bin/python3.12 -DPython3_ROOT=/scr/ivan/opt/python-3.11.0-shared/"
+#+end_src
