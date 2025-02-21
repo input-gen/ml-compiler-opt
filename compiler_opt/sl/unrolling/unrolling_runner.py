@@ -407,6 +407,9 @@ def get_ud_sample(ud: UnrollDecision):
         udrt = get_udr_runtime(udr)
         if udrt.factor == 1:
             base_runtime = udrt.runtime
+            # If we don't obtain a base runtime
+            if base_runtime == None:
+                return None
         else:
             assert udrt.factor >= 2
             y[udrt.factor - UNROLL_FACTOR_OFFSET] = udrt.runtime
@@ -415,7 +418,7 @@ def get_ud_sample(ud: UnrollDecision):
     if all(el is None for el in y):
         return None
 
-    # Obtain speedup factors for all factors.
+    # Obtain speedup factors for all unroll factors.
     # Encode failure to unroll as speedup of 0.0.
     y = [base_runtime / el if el is not None else 0.0 for el in y]
 
@@ -435,7 +438,6 @@ def main(args):
     if args.debug:
         logging.set_verbosity(logging.DEBUG)
 
-    # TODO we should specify the opt program or command line outside of this
     process_and_args = [
         'opt', '-O3', '--input-gen-mode=replay_generated',
     ]
