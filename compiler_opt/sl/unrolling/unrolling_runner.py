@@ -105,9 +105,10 @@ class UnrollDecision:
     results: List[UnrollDecisionResult]
 
 class UnrollCompilerHost:
-    def __init__(self, emit_assembly):
+    def __init__(self, emit_assembly, debug):
         self.emit_assembly = emit_assembly
-        cur_decision = 0
+        self.debug = debug
+
         self.cur_action = None
 
         self.num_decisions = None
@@ -161,11 +162,34 @@ class UnrollCompilerHost:
     def get_unroll_decision_results(
             self,
             mod,
+            process_and_args,
             working_dir: str):
 
         self.channel_base = os.path.join(working_dir, 'channel')
         self.to_compiler = self.channel_base + ".in"
         self.from_compiler = self.channel_base + ".out"
+
+        self.process_and_args = process_and_args
+        args_to_add = [
+            f'--mlgo-loop-unroll-interactive-channel-base={self.channel_base}',
+            '--mlgo-loop-unroll-advisor-mode=development',
+        ]
+        if self.debug:
+            args_to_add.append('-debug-only=loop-unroll-development-advisor')
+        if self.emit_assembly:
+            args_to_add.append('-S')
+
+        process_name = os.path.split(self.process_and_args[0])[1]
+        if 'clang' in process_name:
+            args_to_add = sum([[x[0], x[1]] for x in zip(['-mllvm'] * len(args_to_add), args_to_add)], [])
+            raise Exception("Clang not supported")
+        elif 'opt' in process_name:
+            pass
+        else:
+            raise Exception("Unknown compiler")
+
+        self.process_and_args = self.process_and_args + args_to_add
+
         try:
             logging.debug(f"Opening pipes {self.to_compiler} and {self.from_compiler}")
             os.mkfifo(self.to_compiler, 0o666)
@@ -229,20 +253,9 @@ class UnrollCompilerHost:
 
         cur_decision = 0
 
-        # TODO we should specify the opt program or command line outside of this
-        process_and_args = [
-            'opt',
-            '-O3',
-            f'--mlgo-loop-unroll-interactive-channel-base={self.channel_base}',
-            '--mlgo-loop-unroll-advisor-mode=development',
-            '-debug-only=loop-unroll-development-advisor'
-        ]
-        if self.emit_assembly:
-            process_and_args.append('-S')
-
-        logging.debug(f"Launching compiler {' '.join(process_and_args)}")
+        logging.debug(f"Launching compiler {' '.join(self.process_and_args)}")
         compiler_proc = subprocess.Popen(
-            process_and_args, stderr=subprocess.PIPE,
+            self.process_and_args, stderr=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stdin=subprocess.PIPE
         )
@@ -338,11 +351,14 @@ class UnrollCompilerHost:
                     cur_decision += 1
                     set_nonblocking()
 
+                set_blocking()
+
         outs, errs = compiler_proc.communicate()
         logging.debug("Errs")
         logging.debug(errs.decode("utf-8"))
         logging.debug(f"Outs size {len(outs)}")
-        compiler_proc.wait()
+        status = compiler_proc.wait()
+        logging.debug(f"Status {status}")
 
         if self.emit_assembly:
             outs = outs.decode("utf-8")
@@ -413,15 +429,21 @@ def get_ud_samples(uds: Iterable[UnrollDecision]):
         else:
             logging.debug(f'Obtained invalid sample')
 
+# The below functions are mainly for testing purposes
 def main(args):
 
     if args.debug:
         logging.set_verbosity(logging.DEBUG)
 
+    # TODO we should specify the opt program or command line outside of this
+    process_and_args = [
+        'opt', '-O3', '--input-gen-mode=replay_generated',
+    ]
+
     with open(args.module, 'rb') as f, \
          tempfile.TemporaryDirectory(dir=args.temp_dir) as tmpdir:
         mod = f.read()
-        decision_results = UnrollCompilerHost(bool(args.emit_assembly)).get_unroll_decision_results(mod, tmpdir)
+        decision_results = UnrollCompilerHost(bool(args.emit_assembly), bool(args.debug)).get_unroll_decision_results(mod, process_and_args, tmpdir)
 
         for uds in get_ud_samples(decision_results):
             logging.debug(f'Obtained sample {uds}')
