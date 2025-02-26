@@ -27,6 +27,7 @@ import ctypes
 import math
 import pprint
 import fcntl
+import logging
 from typing import Dict, Tuple, BinaryIO, Union, List, Optional, Iterable
 
 import gin
@@ -36,9 +37,9 @@ from compiler_opt.rl import compilation_runner
 from compiler_opt.rl import corpus
 from compiler_opt.rl import log_reader
 
-from absl import logging
+from input_gen import InputGenReplay, Input
 
-_DEFAULT_IDENTIFIER = 'default'
+logger = logging.getLogger(__name__)
 
 def send_instrument_response(f: BinaryIO, response: Optional[Tuple[str, str]]):
     if response is None:
@@ -129,13 +130,13 @@ class UnrollCompilerHost:
         self.features.append(tensor_values)
 
     def on_heuristic_print(self, index, heuristic):
-        logging.debug(heuristic)
+        logger.debug(heuristic)
 
     def on_action_print(self, index, action):
-        logging.debug(action)
+        logger.debug(action)
 
     def on_action_save(self, index, action):
-        logging.debug(f'Saving action {action}')
+        logger.debug(f'Saving action {action}')
         self.cur_action = action
 
     def get_replaced_response(self, heuristic, index, factor):
@@ -143,19 +144,19 @@ class UnrollCompilerHost:
 
     def read_heuristic(self, fc):
         event = json.loads(fc.readline())
-        logging.debug('Read' + str(event))
+        logger.debug('Read' + str(event))
         assert 'heuristic' in event
         heuristic = int.from_bytes(fc.read(8))
-        logging.debug(heuristic)
+        logger.debug(heuristic)
         fc.readline()
         return heuristic
 
     def read_action(self, fc):
         event = json.loads(fc.readline())
-        logging.debug('Read' + str(event))
+        logger.debug('Read' + str(event))
         assert 'action' in event
         action = bool(int.from_bytes(fc.read(1)))
-        logging.debug(action)
+        logger.debug(action)
         fc.readline()
         return action
 
@@ -164,6 +165,8 @@ class UnrollCompilerHost:
             mod,
             process_and_args,
             working_dir: str):
+
+        print(process_and_args)
 
         self.channel_base = os.path.join(working_dir, 'channel')
         self.to_compiler = self.channel_base + ".in"
@@ -191,7 +194,7 @@ class UnrollCompilerHost:
         self.process_and_args = self.process_and_args + args_to_add
 
         try:
-            logging.debug(f"Opening pipes {self.to_compiler} and {self.from_compiler}")
+            logger.debug(f"Opening pipes {self.to_compiler} and {self.from_compiler}")
             os.mkfifo(self.to_compiler, 0o666)
             os.mkfifo(self.from_compiler, 0o666)
 
@@ -207,15 +210,15 @@ class UnrollCompilerHost:
             if self.num_decisions is None:
                 return
 
-            logging.debug(f'Found {self.num_decisions} decisions to make')
-            logging.debug(f'Collected features: {self.features}')
+            logger.debug(f'Found {self.num_decisions} decisions to make')
+            logger.debug(f'Collected features: {self.features}')
 
             for decision in range(self.num_decisions):
-                logging.debug(f'Exploring decision: {decision}')
+                logger.debug(f'Exploring decision: {decision}')
                 decision_results = []
                 # From factor = 1 (i.e. no unroll) to MAX_UNROLL_FACTOR inclusive
                 for factor in range(1, MAX_UNROLL_FACTOR + 1):
-                    logging.debug(f'Exploring factor: {factor}')
+                    logger.debug(f'Exploring factor: {factor}')
                     _, out_module = self.compile_once(
                         mod,
                         lambda index, features: (),
@@ -231,14 +234,14 @@ class UnrollCompilerHost:
                 else:
                     # If we did not break the above loop
                     ud = UnrollDecision(self.features[decision], decision_results)
-                    logging.debug(pprint.pformat(ud))
-                    logging.debug('Got result:')
+                    logger.debug(pprint.pformat(ud))
+                    logger.debug('Got result:')
                     yield ud
                     continue
                 break
 
         finally:
-            logging.debug(f"Closing pipes")
+            logger.debug(f"Closing pipes")
             os.unlink(self.to_compiler)
             os.unlink(self.from_compiler)
 
@@ -253,13 +256,13 @@ class UnrollCompilerHost:
 
         cur_decision = 0
 
-        logging.debug(f"Launching compiler {' '.join(self.process_and_args)}")
+        logger.debug(f"Launching compiler {' '.join(self.process_and_args)}")
         compiler_proc = subprocess.Popen(
             self.process_and_args, stderr=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stdin=subprocess.PIPE
         )
-        logging.debug(f"Sending module")
+        logger.debug(f"Sending module")
         compiler_proc.stdin.write(mod)
 
         # FIXME is this the proper way to close the pipe? if we don't set it to
@@ -268,7 +271,7 @@ class UnrollCompilerHost:
         compiler_proc.stdin.close()
         compiler_proc.stdin = None
 
-        logging.debug(f"Starting communication")
+        logger.debug(f"Starting communication")
         with io.BufferedWriter(io.FileIO(self.to_compiler, "w+b")) as tc:
             with io.BufferedReader(io.FileIO(self.from_compiler, "r+b")) as fc:
 
@@ -329,12 +332,12 @@ class UnrollCompilerHost:
                         context, next_event, fc, tensor_specs, None
                     )
                     if last_context != context:
-                        logging.debug(f"context: {last_context}")
+                        logger.debug(f"context: {last_context}")
                     context = last_context
-                    logging.debug(f"observation: {observation_id}")
+                    logger.debug(f"observation: {observation_id}")
                     tensor_values = []
                     for fv in features:
-                        logging.debug(fv.to_numpy())
+                        logger.debug(fv.to_numpy())
                         tensor_values.append(fv)
 
                     on_features(cur_decision, tensor_values)
@@ -354,26 +357,26 @@ class UnrollCompilerHost:
                 set_blocking()
 
         outs, errs = compiler_proc.communicate()
-        logging.debug("Errs")
-        logging.debug(errs.decode("utf-8"))
-        logging.debug(f"Outs size {len(outs)}")
+        logger.debug("Errs")
+        logger.debug(errs.decode("utf-8"))
+        logger.debug(f"Outs size {len(outs)}")
         status = compiler_proc.wait()
-        logging.debug(f"Status {status}")
+        logger.debug(f"Status {status}")
 
         if self.emit_assembly:
             outs = outs.decode("utf-8")
-            logging.debug("Output module:")
-            logging.debug(outs)
+            logger.debug("Output module:")
+            logger.debug(outs)
 
 
         return cur_decision, outs
 
 @gin.configurable(module='runners')
-class InliningRunner(compilation_runner.CompilationRunner):
+class UnrollingRunnerBak(compilation_runner.CompilationRunner):
   """Class for collecting data for inlining-for-size.
 
   Usage:
-  inliner = InliningRunner(
+  inliner = UnrollingRunnerBak(
                 clang_path, llvm_size_path, launcher_path,
                 moving_average_decay_rate)
   serialized_sequence_example, default_reward, moving_average_reward,
@@ -389,66 +392,96 @@ class InliningRunner(compilation_runner.CompilationRunner):
       workdir: str) -> Dict[str, Tuple[tf.train.SequenceExample, float]]:
     ...
 
-def get_module_runtime(module):
-    # TODO need to hook up input-gen replay here
-    return random.uniform(1.0, 2.0)
+def DUMP_MODULE(module, ident=''):
+    print(f'DUMPING_MODULE {ident}')
+    dis_command_vector = ['llvm-dis', '-']
+    with subprocess.Popen(
+        dis_command_vector,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        stdin=subprocess.PIPE) as dis_process:
+        output = dis_process.communicate(
+            input=module)[0].decode('utf-8')
+    print(output)
 
-def get_udr_runtime(udr: UnrollDecisionResult):
-    if udr.action or udr.factor == 1:
-        return UnrollDecisionRuntime(udr.factor, get_module_runtime(udr.module))
-    else:
-        return UnrollDecisionRuntime(udr.factor, None)
+def process_module(module, process_and_args, tmpdir, inputs, replay_options, emit_assembly=False, debug=False):
+    def get_module_runtime(module):
 
-def get_ud_sample(ud: UnrollDecision):
-    x = ud.features
-    y = [None for _ in range(ADVICE_TENSOR_LEN)]
-    base_runtime = None
-    for udr in ud.results:
-        udrt = get_udr_runtime(udr)
-        if udrt.factor == 1:
-            base_runtime = udrt.runtime
-            # If we don't obtain a base runtime
-            if base_runtime == None:
-                return None
+        igm = InputGenReplay(
+            module,
+            **replay_options
+        )
+
+        igm.prepare()
+
+        for inpt in inputs:
+            num = 5
+            timeout=0.2
+            print(list(igm.replay_input(inpt.data, inpt.entry_no, num, timeout=timeout)))
+
+        return random.uniform(1.0, 2.0)
+
+    def get_udr_runtime(udr: UnrollDecisionResult):
+        if udr.action or udr.factor == 1:
+            return UnrollDecisionRuntime(udr.factor, get_module_runtime(udr.module))
         else:
-            assert udrt.factor >= 2
-            y[udrt.factor - UNROLL_FACTOR_OFFSET] = udrt.runtime
+            return UnrollDecisionRuntime(udr.factor, None)
 
-    # If none of the factors succeeded.
-    if all(el is None for el in y):
-        return None
+    def get_ud_sample(ud: UnrollDecision):
+        x = ud.features
+        y = [None for _ in range(ADVICE_TENSOR_LEN)]
+        base_runtime = None
+        for udr in ud.results:
+            udrt = get_udr_runtime(udr)
+            if udrt.factor == 1:
+                base_runtime = udrt.runtime
+                # If we don't obtain a base runtime
+                if base_runtime == None:
+                    return None
+            else:
+                assert udrt.factor >= 2
+                y[udrt.factor - UNROLL_FACTOR_OFFSET] = udrt.runtime
 
-    # Obtain speedup factors for all unroll factors.
-    # Encode failure to unroll as speedup of 0.0.
-    y = [base_runtime / el if el is not None else 0.0 for el in y]
+        # If none of the factors succeeded.
+        if all(el is None for el in y):
+            return None
 
-    return (x, y)
+        # Obtain speedup factors for all unroll factors.
+        # Encode failure to unroll as speedup of 0.0.
+        y = [base_runtime / el if el is not None else 0.0 for el in y]
 
-def get_ud_samples(uds: Iterable[UnrollDecision]):
-    for ud in uds:
-        sample = get_ud_sample(ud)
-        if sample is not None:
-            yield sample
-        else:
-            logging.debug(f'Obtained invalid sample')
+        return (x, y)
+
+    def get_ud_samples(uds: Iterable[UnrollDecision]):
+
+        for ud in uds:
+            sample = get_ud_sample(ud)
+            if sample is not None:
+                yield sample
+            else:
+                logger.debug(f'Obtained invalid sample')
+
+    decision_results = UnrollCompilerHost(bool(emit_assembly), bool(debug)).get_unroll_decision_results(module, process_and_args, tmpdir)
+
+    yield from get_ud_samples(decision_results)
 
 # The below functions are mainly for testing purposes
 def main(args):
 
     if args.debug:
-        logging.set_verbosity(logging.DEBUG)
+        logging.basicConfig(level=logging.DEBUG)
+    else:
+        logging.basicConfig(level=logging.INFO)
 
     process_and_args = [
-        'opt', '-O3', '--input-gen-mode=replay_generated',
+        'opt', '-O3',
     ]
 
-    with open(args.module, 'rb') as f, \
-         tempfile.TemporaryDirectory(dir=args.temp_dir) as tmpdir:
-        mod = f.read()
-        decision_results = UnrollCompilerHost(bool(args.emit_assembly), bool(args.debug)).get_unroll_decision_results(mod, process_and_args, tmpdir)
-
-        for uds in get_ud_samples(decision_results):
-            logging.debug(f'Obtained sample {uds}')
+    with open(args.module, 'rb') as f:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mod = f.read()
+            for uds in process_module(mod, process_and_args, tmpdir, [], dict()):
+                logger.debug(f'Obtained sample {uds}')
 
 def parse_args_and_run():
     parser = argparse.ArgumentParser(
