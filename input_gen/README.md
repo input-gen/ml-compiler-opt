@@ -1,6 +1,6 @@
 # input-gen utilities
 
-Baseline cmake configuration:
+Baseline cmake configuration for the llvm installation:
 
 ``` 
 cmake $LLVM_PROJECT_ROOT/llvm -DCMAKE_ENABLE_PROJECTS="clang;lld" -DCMAKE_ENABLE_RUNTIMES="compiler-rt" -DCOMPILER_RT_BUILD_INPUTGEN=ON"
@@ -8,7 +8,28 @@ cmake $LLVM_PROJECT_ROOT/llvm -DCMAKE_ENABLE_PROJECTS="clang;lld" -DCMAKE_ENABLE
 
 input-gen requires a C++20 standard library.
 
+The input-gen scripts generally accept the option `-mclang` to specify
+additional flags to `clang` and `-mllvm` for additional options to `opt`.
+
+`clang` is used for linking and compiling so depending on your environment,
+additional flags may need to be specified.
+
+For example to use a newer gcc toolchain rather than the default (required when
+your default C++ std lib may be too old)
+``` shell
+-mclang='--gcc-toolchain=/path/to/gcc-toolchain' 
+```
+
+Multiple flags can also be specified as such:
+``` shell
+-mclang='--flag1' -mclang='--flag2' 
+```
+
+Note that the scripts in this directory generally require python `3.12` or
+newer, while the scripts outside of this require python `3.11`.
+
 ## Generating ComPileLoop from ComPile
+
 ``` shell
 python3 generate_com_pile_loop.py --dataset path/to/ComPile/ --output-dataset ./ComPileLoop --output-dataset-json ./ComPileLoopJson --end 100
 ```
@@ -45,3 +66,20 @@ python3 process_com_pile_loop_inputs_demo.py --dataset path/to/ComPileLoopInputs
 ```
 
 This will read the dataset and replay all inputs in it.
+
+## Generating samples for training the unroll heuristic
+
+First change to the root directory of this repo.
+
+Prepare the runtime for collecting timing information:
+``` shell
+clang++ -c -emit-llvm -O2 compiler_opt/sl/unrolling/rts/unrolling_profiler.cpp -o compiler_opt/sl/unrolling/rts/unrolling_profiler.bc
+```
+
+The following can be used to generate training samples
+``` shell
+PYTHONPATH=$PYTHONPATH:. python3 compiler_opt/sl/unrolling/process_com_pile_loop_inputs.py --dataset path/to/ComPileLoopInputs -mclang=compiler_opt/sl/unrolling/rts/unrolling_profiler.bc
+```
+
+Note the additional `-mclang` flag which links in the profiling runtime.
+
