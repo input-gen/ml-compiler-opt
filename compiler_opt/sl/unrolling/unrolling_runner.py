@@ -261,7 +261,7 @@ class UnrollCompilerHost:
 
         logger.debug(f"Launching compiler {' '.join(self.process_and_args)}")
         compiler_proc = subprocess.Popen(
-            self.process_and_args, stderr=subprocess.PIPE,
+            self.process_and_args, stderr=None,
             stdout=subprocess.PIPE,
             stdin=subprocess.PIPE
         )
@@ -464,32 +464,36 @@ def process_module(module, process_and_args, tmpdir, inputs, replay_options, emi
 
     def get_ud_sample(ud: UnrollDecision):
         x = ud.features
-        y = [None for _ in range(ADVICE_TENSOR_LEN)]
+        factor_runtimes = [None for _ in range(ADVICE_TENSOR_LEN)]
         for udr in ud.results:
             if udr.factor != 1:
                 udrt = get_udr_runtime(udr)
                 assert udrt.factor >= 2
-                y[udrt.factor - UNROLL_FACTOR_OFFSET] = udrt.runtime
+                factor_runtimes[udrt.factor - UNROLL_FACTOR_OFFSET] = udrt.runtime
+
+        logging.debug(f'Got factor_runtimes {factor_runtimes}')
 
         # If none of the factors succeeded.
-        if all(factor_runtime is None for factor_runtime in y):
+        if all(factor_runtime is None for factor_runtime in factor_runtimes):
             return None
 
         # If we have any factor runtime to compare to, also get the base runtime
         base_runtime = None
         for udr in ud.results:
             if udr.factor == 1:
+                udrt = get_udr_runtime(udr)
                 base_runtime = udrt.runtime
-                # If we don't obtain a base runtime
                 if base_runtime == None:
                     return None
+
+        logging.debug(f'Got base_runtime {base_runtime}')
 
         # Obtain speedup factors for all unroll factors.
         # Encode failure to unroll as speedup of 0.0.
         y = [get_speedup_factor(base_runtime, factor_runtime)
              if factor_runtime is not None
              else 0.0
-             for factor_runtime in y]
+             for factor_runtime in factor_runtimes]
 
         # If we did not manage to obtain a speedup we fail
         if any(r is None for r in y):

@@ -8,18 +8,19 @@ import logging
 import subprocess
 import dataclasses
 from datasets import load_dataset
-import collections
 
 from input_gen.input_gen import InputGenReplay, Input
 
 import unrolling_runner
+
+logger = logging.getLogger(__name__)
 
 def parse_args_and_run():
     parser = argparse.ArgumentParser(
         description='Reading ComPileLoop'
     )
     parser.add_argument('--dataset', required=True)
-    parser.add_argument('--num', default=3, type=int)
+    parser.add_argument('--begin', default=0, type=int)
     parser.add_argument('--dump-llvm', default=False, action='store_true')
 
     parser.add_argument('--temp-dir', default=None)
@@ -39,13 +40,12 @@ def main(args):
         logging.basicConfig(level=logging.INFO)
 
     ds = load_dataset(args.dataset, split='train', streaming=True)
-    l = []
+    ds = ds.skip(args.begin)
     for i, data in enumerate(ds):
-        print(f'Processing module {i}')
-        process_module(data, l, args.dump_llvm, args)
-    print(collections.Counter(l))
+        logger.info(f'Processing module {i}')
+        process_module(data, args.dump_llvm, args)
 
-def process_module(data, l, dump_llvm, args):
+def process_module(data, dump_llvm, args):
 
     inputs = [Input(**inpt) for inpt in data['inputs']]
 
