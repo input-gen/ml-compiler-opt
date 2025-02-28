@@ -28,7 +28,12 @@ import math
 import pprint
 import fcntl
 import logging
+import re
+import numpy as np
+import pandas as pd
 from typing import Dict, Tuple, BinaryIO, Union, List, Optional, Iterable
+
+from statistics import geometric_mean as gmean
 
 import gin
 import tensorflow as tf
@@ -63,7 +68,7 @@ def send(f: BinaryIO, value: Union[int, float], spec: tf.TensorSpec):
         convert_el_func = float
         ctype_func = ctypes.c_float
     else:
-        print(spec.dtype, "not supported")
+        logger.fatal(f'{spec.dtype} not supported')
         assert False
 
     if isinstance(value, list):
@@ -98,7 +103,7 @@ class UnrollDecisionResult:
 @dataclasses.dataclass(frozen=True)
 class UnrollDecisionRuntime:
     factor: int
-    runtime: Optional[float]
+    runtime: Optional[List[int]]
 
 @dataclasses.dataclass(frozen=True)
 class UnrollDecision:
@@ -166,11 +171,9 @@ class UnrollCompilerHost:
             process_and_args,
             working_dir: str):
 
-        print(process_and_args)
-
         self.channel_base = os.path.join(working_dir, 'channel')
-        self.to_compiler = self.channel_base + ".in"
-        self.from_compiler = self.channel_base + ".out"
+        self.to_compiler = self.channel_base + '.in'
+        self.from_compiler = self.channel_base + '.out'
 
         self.process_and_args = process_and_args
         args_to_add = [
@@ -271,54 +274,68 @@ class UnrollCompilerHost:
         compiler_proc.stdin.close()
         compiler_proc.stdin = None
 
+        def set_nonblocking(pipe):
+            os.set_blocking(pipe.fileno(), False);
+        def set_blocking(pipe):
+            os.set_blocking(pipe.fileno(), True);
+
+        output_module = b''
+
+        set_nonblocking(compiler_proc.stdout)
+
         logger.debug(f"Starting communication")
         with io.BufferedWriter(io.FileIO(self.to_compiler, "w+b")) as tc:
             with io.BufferedReader(io.FileIO(self.from_compiler, "r+b")) as fc:
-
-                fl = fcntl.fcntl(fc.fileno(), fcntl.F_GETFL)
 
                 # We need to set the reading pipe to nonblocking for the purpose
                 # of peek'ing and checking if it is readable without blocking
                 # and watch for the process diyng as well. We rever to blocking
                 # mode for the actual communication.
 
-                def set_nonblocking():
-                    fcntl.fcntl(fc.fileno(), fcntl.F_SETFL, fl | os.O_NONBLOCK)
-                def set_blocking():
-                    fcntl.fcntl(fc.fileno(), fcntl.F_SETFL, fl & ~os.O_NONBLOCK)
-
                 def input_available():
+                    nonlocal output_module
+
+                    output = compiler_proc.stdout.read()
+                    if output is not None:
+                        output_module += output
                     if len(fc.peek(1)) > 0:
                         return "yes"
                     if compiler_proc.poll() is not None:
                         return "dead"
                     return "no"
 
-
-                set_nonblocking()
+                set_nonblocking(fc)
                 while True:
                     ia = input_available()
                     if ia == "dead":
                         return None, None
-                    if ia == "yes":
+                    elif ia == "yes":
                         break
+                    elif ia == "no":
+                        continue
+                    else:
+                        assert False
 
-                set_blocking()
+                set_blocking(fc)
 
                 header = log_reader._read_header(fc)
                 tensor_specs = header.features
                 advice_spec = header.advice
                 context = None
 
-                set_nonblocking()
+                set_nonblocking(fc)
                 while True:
                     ia = input_available()
                     if ia == "dead":
                         break
-                    if ia == "no":
+                    elif ia == "yes":
+                        ...
+                    elif ia == "no":
                         continue
+                    else:
+                        assert False
 
-                    set_blocking()
+                    set_blocking(fc)
 
                     next_event = fc.readline()
                     if not next_event:
@@ -352,13 +369,16 @@ class UnrollCompilerHost:
                     send_instrument_response(tc, get_instrument_response(cur_decision))
 
                     cur_decision += 1
-                    set_nonblocking()
+                    set_nonblocking(fc)
 
-                set_blocking()
+                set_blocking(fc)
+
+        set_blocking(compiler_proc.stdout)
 
         outs, errs = compiler_proc.communicate()
+        outs = output_module + outs
         logger.debug("Errs")
-        logger.debug(errs.decode("utf-8"))
+        # logger.debug(errs.decode("utf-8"))
         logger.debug(f"Outs size {len(outs)}")
         status = compiler_proc.wait()
         logger.debug(f"Status {status}")
@@ -405,8 +425,8 @@ def DUMP_MODULE(module, ident=''):
     print(output)
 
 def process_module(module, process_and_args, tmpdir, inputs, replay_options, emit_assembly=False, debug=False):
-    def get_module_runtime(module):
 
+    def get_module_runtimes(module):
         igm = InputGenReplay(
             module,
             **replay_options
@@ -417,38 +437,63 @@ def process_module(module, process_and_args, tmpdir, inputs, replay_options, emi
         for inpt in inputs:
             num = 5
             timeout=0.2
-            print(list(igm.replay_input(inpt.data, inpt.entry_no, num, timeout=timeout)))
-
-        return random.uniform(1.0, 2.0)
+            for res in igm.replay_input(inpt.data, inpt.entry_no, num, timeout=timeout):
+                logger.debug(f'Res {res}')
+                re_match = re.search('MLGO_LOOP_UNROLL_TIMER ([0-9]+)', res.outs.decode('utf-8'))
+                if re_match is None:
+                    logger.debug(f'No match')
+                    yield None
+                else:
+                    f = int(re_match.group(1))
+                    logger.debug(f'Match {f}')
+                    yield f
 
     def get_udr_runtime(udr: UnrollDecisionResult):
         if udr.action or udr.factor == 1:
-            return UnrollDecisionRuntime(udr.factor, get_module_runtime(udr.module))
+            return UnrollDecisionRuntime(udr.factor, list(get_module_runtimes(udr.module)))
         else:
             return UnrollDecisionRuntime(udr.factor, None)
+
+    def get_speedup_factor(base: List[int], opt: List[int]):
+        # This will get element wise speedup factors for all inputs where either
+        # succeeded
+        speedup_factors = (pd.Series(base) / pd.Series(opt)).dropna()
+        if len(speedup_factors) == 0:
+            return None
+        return gmean(speedup_factors)
 
     def get_ud_sample(ud: UnrollDecision):
         x = ud.features
         y = [None for _ in range(ADVICE_TENSOR_LEN)]
-        base_runtime = None
         for udr in ud.results:
-            udrt = get_udr_runtime(udr)
-            if udrt.factor == 1:
-                base_runtime = udrt.runtime
-                # If we don't obtain a base runtime
-                if base_runtime == None:
-                    return None
-            else:
+            if udr.factor != 1:
+                udrt = get_udr_runtime(udr)
                 assert udrt.factor >= 2
                 y[udrt.factor - UNROLL_FACTOR_OFFSET] = udrt.runtime
 
         # If none of the factors succeeded.
-        if all(el is None for el in y):
+        if all(factor_runtime is None for factor_runtime in y):
             return None
+
+        # If we have any factor runtime to compare to, also get the base runtime
+        base_runtime = None
+        for udr in ud.results:
+            if udr.factor == 1:
+                base_runtime = udrt.runtime
+                # If we don't obtain a base runtime
+                if base_runtime == None:
+                    return None
 
         # Obtain speedup factors for all unroll factors.
         # Encode failure to unroll as speedup of 0.0.
-        y = [base_runtime / el if el is not None else 0.0 for el in y]
+        y = [get_speedup_factor(base_runtime, factor_runtime)
+             if factor_runtime is not None
+             else 0.0
+             for factor_runtime in y]
+
+        # If we did not manage to obtain a speedup we fail
+        if any(r is None for r in y):
+            return None
 
         return (x, y)
 
@@ -465,7 +510,6 @@ def process_module(module, process_and_args, tmpdir, inputs, replay_options, emi
 
     yield from get_ud_samples(decision_results)
 
-# The below functions are mainly for testing purposes
 def main(args):
 
     if args.debug:
@@ -481,7 +525,7 @@ def main(args):
         with tempfile.TemporaryDirectory() as tmpdir:
             mod = f.read()
             for uds in process_module(mod, process_and_args, tmpdir, [], dict()):
-                logger.debug(f'Obtained sample {uds}')
+                logger.info(f'Obtained sample {uds}')
 
 def parse_args_and_run():
     parser = argparse.ArgumentParser(

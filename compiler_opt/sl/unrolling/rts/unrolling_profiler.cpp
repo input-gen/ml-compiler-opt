@@ -20,7 +20,7 @@ public:
       ofs.open(*file);
       os = &ofs;
     } else {
-        os = &std::cout;
+      os = &std::cout;
     }
     if (valid)
       *os << "MLGO_LOOP_UNROLL_TIMER " << duration << "\n";
@@ -54,7 +54,7 @@ private:
   bool valid = true;
 
 } timer;
-}
+} // namespace
 
 extern "C" void __mlgo_unrolled_loop_begin(void) { timer.begin(); }
 extern "C" void __mlgo_unrolled_loop_end(void) { timer.end(); }
