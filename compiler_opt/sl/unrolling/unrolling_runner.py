@@ -42,7 +42,7 @@ from compiler_opt.rl import compilation_runner
 from compiler_opt.rl import corpus
 from compiler_opt.rl import log_reader
 
-from input_gen import InputGenReplay, Input
+from input_gen.input_gen import InputGenReplay, Input
 
 logger = logging.getLogger(__name__)
 

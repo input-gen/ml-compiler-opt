@@ -10,7 +10,7 @@ import dataclasses
 from datasets import load_dataset
 import collections
 
-from input_gen import InputGenReplay, Input
+from input_gen.input_gen import InputGenReplay, Input
 
 import unrolling_runner
 
