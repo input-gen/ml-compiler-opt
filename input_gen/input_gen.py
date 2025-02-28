@@ -135,8 +135,8 @@ class InputGenUtils:
         cmd = f'opt -O3 --input-gen-mode=generate'.split(' ') + self.mllvm + self.get_entry_args()
         instrumented_mod, _ = self.get_output(cmd, mod)
         self.save_temp(instrumented_mod, 'instrumented_mod_for_generation.bc', binary=True);
-        with tempfile.NamedTemporaryFile(dir=self.working_dir, suffix='.bc') as f:
-            f.write(mod)
+        with tempfile.NamedTemporaryFile(dir=self.working_dir, suffix='.bc', delete=False) as f:
+            f.write(instrumented_mod)
             f.flush()
             cmd = ['clang++', f.name] + '-linputgen.generate -lpthread -fuse-ld=lld -O3 -flto -o'.split(' ') + [path] + self.mclang
             exe, _ = self.get_output(cmd, instrumented_mod)
@@ -149,7 +149,7 @@ class InputGenUtils:
         return mod
 
     def get_executable_for_replay_no_opt(self, mod, path):
-        with tempfile.NamedTemporaryFile(dir=self.working_dir, suffix='.bc') as f:
+        with tempfile.NamedTemporaryFile(dir=self.working_dir, suffix='.bc', delete=False) as f:
             f.write(mod)
             f.flush()
             cmd = ['clang++',  f.name] + '-linputgen.replay -lpthread -o'.split(' ') + [path] + self.mclang
@@ -353,9 +353,26 @@ def main(args):
     with open(args.module, 'rb') as f:
         mod = f.read()
 
-    igm = InputGenGenerate(mod, args.temp_dir, args.save_temps, args.mclang, args.mllvm, mode, args.temp_dir)
-    igm.prepare()
-    igm.generate()
+    # Generate inputs
+    igg = InputGenGenerate(mod, args.temp_dir, args.save_temps, args.mclang, args.mllvm, mode, args.temp_dir)
+    igg.prepare()
+    igg.generate()
+
+    # Get generated inputs and module for replay
+    replay_module = igg.get_repl_mod()
+    inputs = igg.get_generated_inputs()
+
+    igr = InputGenReplay(
+        replay_module,
+        args.temp_dir, args.save_temps, args.mclang, args.mllvm, args.temp_dir
+    )
+    igr.prepare()
+
+    for inpt in inputs:
+        num = 5
+        timeout=0.2
+        for res in igr.replay_input(inpt.data, inpt.entry_no, num, timeout=timeout):
+            logger.info(f'Res {res}')
 
 if __name__ == '__main__':
     parse_args_and_run()
