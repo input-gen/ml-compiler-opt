@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import pandas
 import argparse
 import tempfile
 import os
@@ -20,6 +21,7 @@ def parse_args_and_run():
         description='Reading ComPileLoop'
     )
     parser.add_argument('--dataset', required=True)
+    parser.add_argument('--output', required=True)
     parser.add_argument('--begin', default=0, type=int)
     parser.add_argument('--dump-llvm', default=False, action='store_true')
 
@@ -41,9 +43,19 @@ def main(args):
 
     ds = load_dataset(args.dataset, split='train', streaming=True)
     ds = ds.skip(args.begin)
+    df = None
     for i, data in enumerate(ds):
         logger.info(f'Processing module {i}')
-        process_module(data, args.dump_llvm, args)
+        this_df = process_module(data, args.dump_llvm, args)
+        if this_df is not None:
+            if df is None:
+                df = this_df
+            else:
+                df = pandas.concat([df, this_df])
+
+    logger.info('Final df')
+    logger.info(df)
+    df.to_csv(args.output, index=False)
 
 def process_module(data, dump_llvm, args):
 
@@ -65,9 +77,34 @@ def process_module(data, dump_llvm, args):
     ]
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        ud_samples = unrolling_runner.process_module(data['module'], process_and_args, tmpdir, inputs, replay_options, debug=args.debug)
-        for uds in ud_samples:
-            logging.info(f'Obtained sample {uds}')
+        uch = unrolling_runner.UnrollCompilerHost(False, args.debug)
+
+        decision_results = uch.get_unroll_decision_results(data['module'], process_and_args, tmpdir)
+
+        samples = list(unrolling_runner.generate_samples(decision_results, inputs, replay_options))
+        if len(samples) == 0:
+            return None
+
+        features_spec = uch.get_features_spec()
+        advice_spec = uch.get_advice_spec()
+
+        flattened_samples = []
+        for features, advice in samples:
+            flattened_features = []
+            for feature in features:
+                assert(len(feature) == 1)
+                flattened_features.append(feature[0])
+            flattened_samples.append(flattened_features + advice)
+
+        labels = []
+        for s in features_spec:
+            labels.append(s.name)
+        labels += [advice_spec.name + str(i + 2) for i in range(advice_spec.shape[0])]
+
+        df = pandas.DataFrame(flattened_samples, columns=labels)
+        logger.info('Intermediate df')
+        logger.info(df)
+        return df
 
 if __name__ == '__main__':
     parse_args_and_run()

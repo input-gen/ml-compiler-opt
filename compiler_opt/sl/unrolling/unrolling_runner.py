@@ -32,6 +32,7 @@ import re
 import numpy as np
 import pandas as pd
 from typing import Dict, Tuple, BinaryIO, Union, List, Optional, Iterable
+from unroll_model import ADVICE_TENSOR_LEN, UNROLL_FACTOR_OFFSET, MAX_UNROLL_FACTOR
 
 from statistics import geometric_mean as gmean
 
@@ -81,11 +82,6 @@ def send(f: BinaryIO, value: Union[int, float], spec: tf.TensorSpec):
     )
     f.flush()
 
-# These need to be kept in sync with the ones in UnrollModelFeatureMaps.h
-MAX_UNROLL_FACTOR = 32
-UNROLL_FACTOR_OFFSET = 2
-ADVICE_TENSOR_LEN = 1 + MAX_UNROLL_FACTOR - UNROLL_FACTOR_OFFSET
-
 def make_response_for_factor(factor: int):
     l = [0.5 for _ in range(ADVICE_TENSOR_LEN)]
     if factor == 0 or factor == 1:
@@ -110,6 +106,13 @@ class UnrollDecision:
     features: List
     results: List[UnrollDecisionResult]
 
+@dataclasses.dataclass(frozen=True)
+class CompilationResult:
+    module: bytes
+    features_spec: List
+    advice_spec: List
+    num_decisions: int
+
 class UnrollCompilerHost:
     def __init__(self, emit_assembly, debug):
         self.emit_assembly = emit_assembly
@@ -128,6 +131,9 @@ class UnrollCompilerHost:
         self.channel_base = None
         self.to_compiler = None
         self.from_compiler = None
+
+        self.features_spec = None
+        self.advice_spec = None
 
     def on_features_collect(self, index, tensor_values):
         if self.tensor_mode == 'numpy':
@@ -165,6 +171,12 @@ class UnrollCompilerHost:
         fc.readline()
         return action
 
+    def get_advice_spec(self):
+        return self.advice_spec
+
+    def get_features_spec(self):
+        return self.features_spec
+
     def get_unroll_decision_results(
             self,
             mod,
@@ -201,7 +213,7 @@ class UnrollCompilerHost:
             os.mkfifo(self.to_compiler, 0o666)
             os.mkfifo(self.from_compiler, 0o666)
 
-            self.num_decisions, _ = self.compile_once(
+            cr = self.compile_once(
                 mod,
                 self.on_features_collect,
                 self.on_heuristic_print,
@@ -209,9 +221,13 @@ class UnrollCompilerHost:
                 lambda index: None,
                 lambda index, tensor, heuristic: make_response_for_factor(heuristic)
                )
-
-            if self.num_decisions is None:
+            if cr is None:
                 return
+            self.num_decisions = cr.num_decisions
+            if self.num_decisions == 0:
+                return
+            self.features_spec = cr.features_spec
+            self.advice_spec = cr.advice_spec
 
             logger.debug(f'Found {self.num_decisions} decisions to make')
             logger.debug(f'Collected features: {self.features}')
@@ -222,7 +238,7 @@ class UnrollCompilerHost:
                 # From factor = 1 (i.e. no unroll) to MAX_UNROLL_FACTOR inclusive
                 for factor in range(1, MAX_UNROLL_FACTOR + 1):
                     logger.debug(f'Exploring factor: {factor}')
-                    _, out_module = self.compile_once(
+                    cr = self.compile_once(
                         mod,
                         lambda index, features: (),
                         lambda index, heuristic: (),
@@ -230,8 +246,9 @@ class UnrollCompilerHost:
                         lambda index: ("__mlgo_unrolled_loop_begin", "__mlgo_unrolled_loop_end") if index == decision else None,
                         lambda index, tensor, heuristic: make_response_for_factor(factor) if index == decision else make_response_for_factor(heuristic)
                     )
-                    if out_module is None:
+                    if cr is None:
                         break
+                    out_module = cr.module
                     decision_results.append(
                         UnrollDecisionResult(factor, self.cur_action, out_module))
                 else:
@@ -280,6 +297,8 @@ class UnrollCompilerHost:
             os.set_blocking(pipe.fileno(), True);
 
         output_module = b''
+        tensor_specs = None
+        advice_spec = None
 
         set_nonblocking(compiler_proc.stdout)
 
@@ -308,7 +327,7 @@ class UnrollCompilerHost:
                 while True:
                     ia = input_available()
                     if ia == "dead":
-                        return None, None
+                        return None
                     elif ia == "yes":
                         break
                     elif ia == "no":
@@ -388,8 +407,11 @@ class UnrollCompilerHost:
             logger.debug("Output module:")
             logger.debug(outs)
 
-
-        return cur_decision, outs
+        return CompilationResult(
+            module=outs,
+            features_spec=tensor_specs,
+            advice_spec=advice_spec,
+            num_decisions=cur_decision)
 
 @gin.configurable(module='runners')
 class UnrollingRunnerBak(compilation_runner.CompilationRunner):
@@ -424,8 +446,7 @@ def DUMP_MODULE(module, ident=''):
             input=module)[0].decode('utf-8')
     print(output)
 
-def process_module(module, process_and_args, tmpdir, inputs, replay_options, emit_assembly=False, debug=False):
-
+def generate_samples(decision_results, inputs, replay_options):
     def get_module_runtimes(module):
         igm = InputGenReplay(
             module,
@@ -510,8 +531,6 @@ def process_module(module, process_and_args, tmpdir, inputs, replay_options, emi
             else:
                 logger.debug(f'Obtained invalid sample')
 
-    decision_results = UnrollCompilerHost(bool(emit_assembly), bool(debug)).get_unroll_decision_results(module, process_and_args, tmpdir)
-
     yield from get_ud_samples(decision_results)
 
 def main(args):
@@ -528,7 +547,10 @@ def main(args):
     with open(args.module, 'rb') as f:
         with tempfile.TemporaryDirectory() as tmpdir:
             mod = f.read()
-            for uds in process_module(mod, process_and_args, tmpdir, [], dict()):
+            uch = UnrollCompilerHost(args.emit_assembly, args.debug)
+            decision_results = uch.get_unroll_decision_results(module, process_and_args, tmpdir)
+
+            for uds in generate_samples(decision_results, [], dict()):
                 logger.info(f'Obtained sample {uds}')
 
 def parse_args_and_run():
