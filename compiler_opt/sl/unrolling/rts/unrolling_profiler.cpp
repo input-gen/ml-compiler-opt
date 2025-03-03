@@ -5,10 +5,10 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <fstream>
 #include <iostream>
 #include <optional>
-#include <cstring>
 
 namespace {
 class MLGOTimer {
@@ -20,7 +20,7 @@ public:
     const int initialize_pfm_result = pfm_initialize();
     if (initialize_pfm_result != PFM_SUCCESS) {
       std::cerr << pfm_strerror(initialize_pfm_result) << "\n";
-      exit(1);
+      fatal(1);
     }
 
     // Get the event encoding.
@@ -38,21 +38,20 @@ public:
     // what the CyclesCounter value is for the uarch in question in LLVM's
     // x86PfmCounters.td file though.
     const int get_encoding_result =
-        pfm_get_os_event_encoding("cycles_not_in_halt", PFM_PLM3,
+        pfm_get_os_event_encoding("unhalted_core_cycles", PFM_PLM3,
                                   PFM_OS_PERF_EVENT, &get_encoding_arguments);
     if (fully_qualified_name) {
       free(fully_qualified_name);
     }
     if (get_encoding_result != PFM_SUCCESS) {
       std::cerr << pfm_strerror(get_encoding_result) << "\n";
-      exit(1);
+      fatal(1);
     }
 
-    event_file_descriptor =
-        perf_event_open(attribute, getpid(), -1, -1, 0);
+    event_file_descriptor = perf_event_open(attribute, getpid(), -1, -1, 0);
     if (event_file_descriptor == -1) {
       std::cerr << "Failed to open event\n";
-      exit(1);
+      fatal(1);
     }
   }
   ~MLGOTimer() {
@@ -83,16 +82,22 @@ public:
 
     ioctl(event_file_descriptor, PERF_EVENT_IOC_DISABLE);
     uint64_t event_info[3];
-    ssize_t read_size = read(event_file_descriptor, &event_info, sizeof(event_info));
+    ssize_t read_size =
+        read(event_file_descriptor, &event_info, sizeof(event_info));
     if (read_size != sizeof(event_info)) {
       std::cerr << "Failed to read perf counter\n";
-      exit(1);
+      fatal(1);
     }
 
     duration += event_info[0];
   }
 
 private:
+  void fatal(int status) {
+    valid = false;
+    exit(status);
+  }
+
   std::optional<char *> file;
   int event_file_descriptor = 0;
   uint64_t duration = 0;
