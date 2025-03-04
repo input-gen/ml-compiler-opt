@@ -10,6 +10,9 @@ psutil = "==6.1.0"
 tf-agents = "==0.19.0"
 tensorflow = "==2.15.0"
 dm-reverb = "==0.14.0"
+ray = "==2.43.0"
+pandas = "==2.2.3"
+datasets = "==3.3.2"
 
 [dev-packages]
 pylint = "==3.3.2"

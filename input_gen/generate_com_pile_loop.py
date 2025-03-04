@@ -13,12 +13,13 @@ import json
 import signal
 import sys
 import pandas
+import ray
 
 from datasets import load_dataset
 from dataset_writer import DatasetWriter
 
 if sys.version_info.major == 3 and sys.version_info.minor < 12:
-    absl.error('This script needs python version >= 3.12')
+    print('This script needs python version >= 3.12', file=sys.stderr)
     exit(1)
 
 def parse_args_and_run():
@@ -33,7 +34,7 @@ def parse_args_and_run():
     parser.add_argument('--output-dataset', required=True)
     parser.add_argument('--output-dataset-json', required=True)
     parser.add_argument('--begin', default=0, type=int)
-    parser.add_argument('--end', default=3, type=int)
+    parser.add_argument('--end', default=None, type=int)
     parser.add_argument('--parquet-start', default=0, type=int)
 
     args = parser.parse_args()
@@ -41,15 +42,11 @@ def parse_args_and_run():
     ds = load_dataset(os.path.join(args.dataset, args.language), split='train', streaming=True)
 
     dw = DatasetWriter(args.begin, args.end, args.parquet_start, args.output_dataset, args.output_dataset_json)
-    le = LoopExtractor(args)
-    dw.process(le.process_module_wrapper, ds)
+    dw.process(ds, process_module_wrapper, args)
 
-class LoopExtractor:
-    def __init__(self, args):
-        self.args = args
-
-    def process_module_wrapper(self, i, data):
-        return process_module(data['content'], data['language'], i, self.args)
+@ray.remote
+def process_module_wrapper(args, i, data):
+    return process_module(data['content'], data['language'], i, args)
 
 def process_module(module, language, idx, args):
     with tempfile.TemporaryDirectory(dir=args.temp_dir, delete=(not args.save_temps)) as outdir:

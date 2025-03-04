@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import ray
 import argparse
 import json
 import signal
@@ -67,7 +68,7 @@ class DatasetWriter:
         self.first_in_parquet = self.i + 1
         self.parquet_id += 1
 
-    def process(self, process_fn, ds):
+    def process(self, ds, process_fn, process_fn_args):
         curparname = self.get_current_parquet_name()
         if os.path.exists(curparname):
             raise Exception(f'The parquet file {curparname} already exists. Aborting.')
@@ -78,22 +79,33 @@ class DatasetWriter:
         os.makedirs(self.output_dataset, exist_ok=True)
         os.makedirs(self.output_dataset_json, exist_ok=True)
 
-        ds = ds.skip(self.i)
+        ds = iter(ds.skip(self.i))
 
-        for data in ds:
-            new_df, size_estimate = process_fn(self.i, data)
-            self.total_pfile_size += size_estimate
-            if new_df is not None:
-                self.dfs.append(new_df)
-            if self.total_pfile_size > PARQUET_SIZE:
-                self.write_parquet()
-            if self.i == self.end:
-                print(f'Finished all {self.end}')
+        max_worklist_size = 100
+        ray_wait_timeout = 1.0
+        worklist = []
+
+        while True:
+            finished, worklist = ray.wait(worklist, timeout=ray_wait_timeout)
+            while not self.should_break and len(worklist) < max_worklist_size:
+                if self.i == self.end:
+                    break
+                try:
+                    data = next(ds)
+                except StopIteration:
+                    break
+                worklist.append(process_fn.remote(process_fn_args, self.i, data))
+                self.i += 1
+
+            for new_df, size_estimate in ray.get(finished):
+                self.total_pfile_size += size_estimate
+                if new_df is not None:
+                    self.dfs.append(new_df)
+                if self.total_pfile_size > PARQUET_SIZE:
+                    self.write_parquet()
+
+            if len(worklist) == 0:
                 break
-            if self.should_break:
-                print(f'Stopping at {self.i}')
-                break
-            self.i += 1
 
         print(f'Writing final parquet {self.i}')
         self.write_parquet()
