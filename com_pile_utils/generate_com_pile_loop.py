@@ -16,7 +16,8 @@ import pandas
 import ray
 
 from datasets import load_dataset
-from dataset_writer import DatasetWriter
+
+from input_gen.dataset_writer import DatasetWriter
 
 if sys.version_info.major == 3 and sys.version_info.minor < 12:
     print('This script needs python version >= 3.12', file=sys.stderr)
@@ -26,7 +27,9 @@ def parse_args_and_run():
     parser = argparse.ArgumentParser(
         description='A tool for making a LLVM IR loop dataset'
     )
+
     parser.add_argument('--language', default='c')
+
     parser.add_argument('--save-temps', action='store_true', default=False)
     parser.add_argument('--temp-dir', default=None)
 
