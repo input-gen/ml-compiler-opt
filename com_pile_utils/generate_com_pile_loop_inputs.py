@@ -23,8 +23,8 @@ import ray
 from datasets import load_dataset
 from typing import Dict, Tuple, BinaryIO, Union, List, Optional, Iterable
 
-from input_gen.input_gen import InputGenGenerate, Input, InputGenError
-from input_gen.dataset_writer import DatasetWriter
+from input_gen.utils import InputGenGenerate, Input, InputGenError, InputGenInstrumentationError
+from dataset_writer import DatasetWriter
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +50,8 @@ def parse_args_and_run():
     parser.add_argument('--end', default=None, type=int)
     parser.add_argument('--parquet-start', default=0, type=int)
 
-    parser.add_argument('-debug', default=False, action='store_true')
+    parser.add_argument('--debug', default=False, action='store_true')
+    parser.add_argument('--debug-instrumentation', default=False, action='store_true')
 
     args = parser.parse_args()
     main(args)
@@ -67,6 +68,12 @@ def main(args):
 
 @ray.remote
 def process_module_wrapper(args, i, data):
+    instrumentationLogger = logging.getLogger('input_gen_instrumentation_logger')
+    if args.debug_instrumentation:
+        instrumentationLogger.setLevel(logging.DEBUG)
+    else:
+        instrumentationLogger.setLevel(logging.WARNING)
+
     try:
         igm = InputGenGenerate(
             data['module'],
@@ -98,8 +105,8 @@ def process_module_wrapper(args, i, data):
 
         return df, size
 
-    except subprocess.CalledProcessError as e:
-        logging.debug(f'InputGenGenerate failed: {e}')
+    except InputGenInstrumentationError as e:
+        instrumentationLogger.debug(e)
         return None, 0
     except InputGenError as e:
         logging.debug(f'InputGenGenerate failed: {e}')

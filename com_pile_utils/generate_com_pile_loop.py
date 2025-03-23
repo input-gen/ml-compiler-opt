@@ -17,7 +17,7 @@ import ray
 
 from datasets import load_dataset
 
-from input_gen.dataset_writer import DatasetWriter
+from dataset_writer import DatasetWriter
 
 if sys.version_info.major == 3 and sys.version_info.minor < 12:
     print('This script needs python version >= 3.12', file=sys.stderr)

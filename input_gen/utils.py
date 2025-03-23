@@ -39,6 +39,28 @@ class ReplayResult:
 class InputGenError(Exception):
     pass
 
+class InputGenExecError(InputGenError):
+    cmd: List[str]
+    outs: str
+    errs: str
+
+    def __init__(self, cmd, outs, errs):
+        self.cmd = cmd
+        self.outs = outs
+        self.errs = errs
+        super().__init__('cmd:\n{}\nouts:\n{}\nerrs:\n{}\n'.format(' '.join(self.cmd), self.outs, self.errs))
+
+    def __repr__(self):
+        return ('cmd: ' + ' '.join(self.cmd) + '\n' +
+                'outs: \n' + self.outs + '\n' +
+                'errs: \n' + self.errs + '\n')
+
+class InputGenInstrumentationError(InputGenExecError):
+    pass
+
+class InputGenTimeout(InputGenError):
+    pass
+
 class InputGenUtils:
     def __init__(self, working_dir=None, save_temps=False, mclang=None, mllvm=None, temp_dir=None):
         self.save_temps = save_temps
@@ -86,7 +108,7 @@ class InputGenUtils:
         with open(fn, mode) as f:
             f.write(content)
 
-    def get_output(self, cmd, stdin=None, allow_fail=False, timeout=None):
+    def get_output(self, cmd, stdin=None, allow_fail=False, timeout=None, ExecFailTy=InputGenExecError):
         logger.debug(f'Running cmd: {" ".join(cmd)}.')
         with subprocess.Popen(
             cmd,
@@ -108,15 +130,16 @@ class InputGenUtils:
                     proc.kill()
                     proc.communicate()
                     logger.debug("Killed.")
-                    raise InputGenError(f'Timed out: {cmd}')
-                raise InputGenError(f'Timed out: {cmd}')
+                    raise InputGenTimeout(f'Timed out: {cmd}')
+                raise InputGenTimeout(f'Timed out: {cmd}')
 
             if status != 0 and not allow_fail:
                 logger.debug(f'Exit with status {status}')
                 logger.debug(f'cmd: {" ".join(cmd)}')
                 logger.debug(f'output:')
-                logger.debug(errs.decode('utf-8'))
-                raise InputGenError(f'Command failed: {cmd}')
+                errs_decoded = errs.decode('utf-8')
+                logger.debug(errs_decoded)
+                raise ExecFailTy(cmd, outs.decode('utf-8'), errs_decoded)
 
             return outs, errs
 
@@ -133,18 +156,18 @@ class InputGenUtils:
 
     def get_executable_for_generation(self, mod, path):
         cmd = f'opt -O3 --input-gen-mode=generate'.split(' ') + self.mllvm + self.get_entry_args()
-        instrumented_mod, _ = self.get_output(cmd, mod)
+        instrumented_mod, _ = self.get_output(cmd, mod, ExecFailTy=InputGenInstrumentationError)
         self.save_temp(instrumented_mod, 'instrumented_mod_for_generation.bc', binary=True);
         with tempfile.NamedTemporaryFile(dir=self.working_dir, suffix='.bc', delete=False) as f:
             f.write(instrumented_mod)
             f.flush()
             cmd = ['clang++', f.name] + '-linputgen.generate -lpthread -fuse-ld=lld -O3 -flto -o'.split(' ') + [path] + self.mclang
-            exe, _ = self.get_output(cmd, instrumented_mod)
+            exe, _ = self.get_output(cmd, instrumented_mod, ExecFailTy=InputGenInstrumentationError)
         self.save_temp(exe, 'generation.exe', binary=True);
 
     def get_no_opt_replay_module(self, mod):
         cmd = f'opt -passes=input-gen-instrument-entries,input-gen-instrument-memory --input-gen-mode=replay_generated'.split(' ') + self.mllvm + self.get_entry_args()
-        mod, _ = self.get_output(cmd, mod)
+        mod, _ = self.get_output(cmd, mod, ExecFailTy=InputGenInstrumentationError)
         self.save_temp(mod, 'instrumented_no_opt_replay_module.bc', binary=True);
         return mod
 
@@ -153,7 +176,7 @@ class InputGenUtils:
             f.write(mod)
             f.flush()
             cmd = ['clang++',  f.name] + '-linputgen.replay -lpthread -o'.split(' ') + [path] + self.mclang
-            exe, _ = self.get_output(cmd, mod)
+            exe, _ = self.get_output(cmd, mod, ExecFailTy=InputGenInstrumentationError)
 
 class InputGenReplay(InputGenUtils):
     def __init__(self, mod, working_dir=None, save_temps=False, mclang=None, mllvm=None, temp_dir=None):
