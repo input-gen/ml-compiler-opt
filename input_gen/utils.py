@@ -50,11 +50,6 @@ class InputGenExecError(InputGenError):
         self.errs = errs
         super().__init__('cmd:\n{}\nouts:\n{}\nerrs:\n{}\n'.format(' '.join(self.cmd), self.outs, self.errs))
 
-    def __repr__(self):
-        return ('cmd: ' + ' '.join(self.cmd) + '\n' +
-                'outs: \n' + self.outs + '\n' +
-                'errs: \n' + self.errs + '\n')
-
 class InputGenInstrumentationError(InputGenExecError):
     pass
 

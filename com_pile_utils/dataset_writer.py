@@ -7,12 +7,20 @@ import signal
 import pandas
 import pyarrow
 import os
+import dataclasses
 
 from pyarrow import parquet
 from datasets import load_dataset
 
 # 100MB
 PARQUET_SIZE = 100 * 1000 * 1000
+VER = '1.1'
+
+@dataclasses.dataclass(frozen=True)
+class ProcessResult:
+    df: pandas.DataFrame
+    size: int
+    i: int
 
 class DatasetWriter:
     def __init__(self, begin, end, parquet_start, output_dataset, output_dataset_json, parquet_size=PARQUET_SIZE):
@@ -24,17 +32,17 @@ class DatasetWriter:
         self.end = end
 
         self.dfs = []
+        self.idxs_in_parquet = []
         self.total_pfile_size = 0
         self.parquet_id = parquet_start
         self.should_break = False
         self.i = begin
-        self.first_in_parquet = self.i
 
         signal.signal(signal.SIGUSR2, self.receive_should_break)
         signal.signal(signal.SIGUSR1, self.receive)
 
     def receive(self, signum, stack):
-        print(f'Progress: module {self.i} size {self.total_pfile_size}')
+        print(f'Progress: module {self.i} size {self.total_pfile_size} pending {sorted(self.idxs_in_parquet)}')
 
     def receive_should_break(self, signum, stack):
         print(f'Will break')
@@ -51,21 +59,21 @@ class DatasetWriter:
         json_name = self.get_current_parquet_json_name()
         if len(self.dfs) == 0:
             return
-        print(f'Writing intermediate parquet {self.parquet_id} with estimated size {self.total_pfile_size} for modules {self.first_in_parquet} to {self.i}')
+        print(f'Writing intermediate parquet {self.parquet_id} with estimated size {self.total_pfile_size} for modules {sorted(self.idxs_in_parquet)}')
         df = pandas.concat(self.dfs)
         table = pyarrow.Table.from_pandas(df, preserve_index=False)
         parquet.write_table(table, name, compression='NONE')
         with open(json_name, 'w') as fp:
             fp.write(json.dumps({
+                'version' : VER,
                 'estimated_size' : self.total_pfile_size,
-                'first' : self.first_in_parquet,
-                'last' : self.i,
-                'num' : self.i - self.first_in_parquet + 1,
+                'num' : len(self.idxs_in_parquet),
+                'idxs' : sorted(self.idxs_in_parquet),
             }, indent=4) + '\n')
 
         self.dfs = []
+        self.idxs_in_parquet = []
         self.total_pfile_size = 0
-        self.first_in_parquet = self.i + 1
         self.parquet_id += 1
 
     def process(self, ds, process_fn, process_fn_args):
@@ -81,7 +89,7 @@ class DatasetWriter:
 
         ds = iter(ds.skip(self.i))
 
-        max_worklist_size = 100
+        max_worklist_size = 300
         ray_wait_timeout = 1.0
         worklist = []
 
@@ -97,10 +105,12 @@ class DatasetWriter:
                 worklist.append(process_fn.remote(process_fn_args, self.i, data))
                 self.i += 1
 
-            for new_df, size_estimate in ray.get(finished):
-                self.total_pfile_size += size_estimate
-                if new_df is not None:
-                    self.dfs.append(new_df)
+            for res in ray.get(finished):
+                if res is None:
+                    continue
+                self.total_pfile_size += res.size
+                self.dfs.append(res.df)
+                self.idxs_in_parquet.append(res.i)
                 if self.total_pfile_size > PARQUET_SIZE:
                     self.write_parquet()
 
@@ -109,3 +119,6 @@ class DatasetWriter:
 
         print(f'Writing final parquet {self.i}')
         self.write_parquet()
+
+if __name__ == '__main__':
+    parse_args_and_run()

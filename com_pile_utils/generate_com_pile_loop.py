@@ -105,9 +105,9 @@ def process_module_in_dir(module, language, idx, temp_outdir):
         i += 1
 
     if len(dfs) == 0:
-        return None, 0
+        return None
 
-    return pandas.concat(dfs), size_estimate
+    return ProcessResult(pandas.concat(dfs), size_estimate, idx)
 
 if __name__ == '__main__':
     parse_args_and_run()

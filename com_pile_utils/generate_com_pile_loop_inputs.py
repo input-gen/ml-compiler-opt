@@ -24,7 +24,7 @@ from datasets import load_dataset
 from typing import Dict, Tuple, BinaryIO, Union, List, Optional, Iterable
 
 from input_gen.utils import InputGenGenerate, Input, InputGenError, InputGenInstrumentationError
-from dataset_writer import DatasetWriter
+from dataset_writer import DatasetWriter, ProcessResult
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +61,8 @@ def main(args):
         logging.basicConfig(level=logging.DEBUG)
     else:
         logging.basicConfig(level=logging.INFO)
+
+    # ray.init(log_to_driver=False)
 
     ds = load_dataset(args.dataset, split='train', streaming=True)
     dw = DatasetWriter(args.begin, args.end, args.parquet_start, args.output_dataset, args.output_dataset_json)
@@ -103,14 +105,15 @@ def process_module_wrapper(args, i, data):
         # We should also probably run the generated inputs and make sure they
         # run successfully.
 
-        return df, size
+        return ProcessResult(df, size, i)
 
     except InputGenInstrumentationError as e:
+        instrumentationLogger.debug(f'Instrumentation error in module {i}')
         instrumentationLogger.debug(e)
-        return None, 0
+        return None
     except InputGenError as e:
-        logging.debug(f'InputGenGenerate failed: {e}')
-        return None, 0
+        logger.debug(f'InputGenGenerate failed: {e}')
+        return None
 
 if __name__ == '__main__':
     parse_args_and_run()
