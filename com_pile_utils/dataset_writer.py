@@ -36,7 +36,16 @@ class CorruptMetadata(Exception):
     pass
 
 class DatasetWriter:
-    def __init__(self, output_dataset, output_dataset_json, begin=0, end=None, parquet_size=PARQUET_SIZE):
+    def __init__(self, output_dataset, output_dataset_json=None, begin=0, end=None, parquet_size=PARQUET_SIZE):
+
+        if output_dataset_json is None:
+            split = os.path.split(output_dataset)
+            if split[1] == '':
+                base = split[0]
+            else:
+                base = output_dataset
+            output_dataset_json = base + 'Json'
+
         self.output_dataset = output_dataset
         self.output_dataset_json = output_dataset_json
         self.parquet_size = parquet_size
@@ -84,7 +93,10 @@ class DatasetWriter:
             if not os.path.exists(parquet_filename):
                 raise CorruptMetadata('Corresponding parquet does not exist')
             with open(json_filename, 'r') as f:
-                obj = json.load(f)
+                try:
+                    obj = json.load(f)
+                except JSONDecodeError as e:
+                    raise CorruptMetadata(str(e))
                 if obj['version'] != VER:
                     raise VersionMismatch(VER, obj['version'])
                 logger.debug(f'Read metadate {obj}')

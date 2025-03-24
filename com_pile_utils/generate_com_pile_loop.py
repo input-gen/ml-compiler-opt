@@ -35,7 +35,7 @@ def parse_args_and_run():
 
     parser.add_argument('--dataset', required=True)
     parser.add_argument('--output-dataset', required=True)
-    parser.add_argument('--output-dataset-json', required=True)
+    parser.add_argument('--output-dataset-json', default=None)
     parser.add_argument('--begin', default=0, type=int)
     parser.add_argument('--end', default=None, type=int)
 
