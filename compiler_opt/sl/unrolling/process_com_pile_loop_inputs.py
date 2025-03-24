@@ -7,10 +7,12 @@ import os
 import json
 import logging
 import subprocess
+import ray
 import dataclasses
 from datasets import load_dataset
 
-from input_gen.input_gen import InputGenReplay, Input
+from input_gen.utils import InputGenReplay, Input, InputGenError
+from com_pile_utils.dataset_writer import DatasetWriter, ProcessResult
 
 import unrolling_runner
 
@@ -21,7 +23,8 @@ def parse_args_and_run():
         description='Reading ComPileLoop'
     )
     parser.add_argument('--dataset', required=True)
-    parser.add_argument('--output', required=True)
+    parser.add_argument('--output-dataset', required=True)
+    parser.add_argument('--output-dataset-json', default=None)
     parser.add_argument('--begin', default=0, type=int)
     parser.add_argument('--dump-llvm', default=False, action='store_true')
 
@@ -30,10 +33,13 @@ def parse_args_and_run():
     parser.add_argument('-mclang', default=[], action='append')
     parser.add_argument('-mllvm', default=[], action='append')
 
-    parser.add_argument('-debug', default=False, action='store_true')
+    parser.add_argument('--debug', default=False, action='store_true')
 
     args = parser.parse_args()
     main(args)
+
+# 10MB
+PARQUET_SIZE = 10 * 1000 * 1000
 
 def main(args):
     if args.debug:
@@ -42,20 +48,16 @@ def main(args):
         logging.basicConfig(level=logging.INFO)
 
     ds = load_dataset(args.dataset, split='train', streaming=True)
-    ds = ds.skip(args.begin)
-    df = None
-    for i, data in enumerate(ds):
-        logger.info(f'Processing module {i}')
-        this_df = process_module(data, args.dump_llvm, args)
-        if this_df is not None:
-            if df is None:
-                df = this_df
-            else:
-                df = pandas.concat([df, this_df])
+    dw = DatasetWriter(args.output_dataset, args.output_dataset_json, args.begin, parquet_size=PARQUET_SIZE)
+    dw.process(ds, process_module_wrapper, args)
 
-    logger.info('Final df')
-    logger.info(df)
-    df.to_csv(args.output, index=False)
+@ray.remote
+def process_module_wrapper(args, i, data):
+    res = process_module(data, args.dump_llvm, args)
+    if res is None:
+        return None
+    else:
+        return ProcessResult(res, res.memory_usage(index=True).sum(), i)
 
 def process_module(data, dump_llvm, args):
 
@@ -77,34 +79,39 @@ def process_module(data, dump_llvm, args):
     ]
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        uch = unrolling_runner.UnrollCompilerHost(False, args.debug)
+        try:
+            uch = unrolling_runner.UnrollCompilerHost(False, args.debug)
 
-        decision_results = uch.get_unroll_decision_results(data['module'], process_and_args, tmpdir)
+            decision_results = uch.get_unroll_decision_results(data['module'], process_and_args, tmpdir)
 
-        samples = list(unrolling_runner.generate_samples(decision_results, inputs, replay_options))
-        if len(samples) == 0:
+            samples = list(unrolling_runner.generate_samples(decision_results, inputs, replay_options))
+            if len(samples) == 0:
+                return None
+
+            features_spec = uch.get_features_spec()
+            advice_spec = uch.get_advice_spec()
+
+            flattened_samples = []
+            for features, advice in samples:
+                flattened_features = []
+                for feature in features:
+                    assert(len(feature) == 1)
+                    flattened_features.append(feature[0])
+                flattened_samples.append(flattened_features + advice)
+
+            labels = []
+            for s in features_spec:
+                labels.append(s.name)
+            labels += [advice_spec.name + str(i + 2) for i in range(advice_spec.shape[0])]
+
+            df = pandas.DataFrame(flattened_samples, columns=labels)
+            logger.debug('Intermediate df')
+            logger.debug(df)
+            return df
+
+        except InputGenError as e:
+            logger.debug(f'InputGenGenerate failed: {e}')
             return None
-
-        features_spec = uch.get_features_spec()
-        advice_spec = uch.get_advice_spec()
-
-        flattened_samples = []
-        for features, advice in samples:
-            flattened_features = []
-            for feature in features:
-                assert(len(feature) == 1)
-                flattened_features.append(feature[0])
-            flattened_samples.append(flattened_features + advice)
-
-        labels = []
-        for s in features_spec:
-            labels.append(s.name)
-        labels += [advice_spec.name + str(i + 2) for i in range(advice_spec.shape[0])]
-
-        df = pandas.DataFrame(flattened_samples, columns=labels)
-        logger.info('Intermediate df')
-        logger.info(df)
-        return df
 
 if __name__ == '__main__':
     parse_args_and_run()
