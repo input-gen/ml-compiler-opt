@@ -15,7 +15,7 @@ input-gen requires a C++20 standard library.
 The input-gen scripts generally accept the option `-mclang` to specify
 additional flags to `clang` and `-mllvm` for additional options to `opt`.
 
-Pass `-debug` to enable verbose output for debugging purposes.
+Pass `--debug` to enable verbose output for debugging purposes.
 
 `clang` is used for linking and compiling so depending on your environment,
 additional flags may need to be specified.

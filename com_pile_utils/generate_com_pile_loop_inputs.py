@@ -48,7 +48,6 @@ def parse_args_and_run():
     parser.add_argument('--output-dataset-json', required=True)
     parser.add_argument('--begin', default=0, type=int)
     parser.add_argument('--end', default=None, type=int)
-    parser.add_argument('--parquet-start', default=0, type=int)
 
     parser.add_argument('--debug', default=False, action='store_true')
     parser.add_argument('--debug-instrumentation', default=False, action='store_true')
@@ -65,7 +64,7 @@ def main(args):
     # ray.init(log_to_driver=False)
 
     ds = load_dataset(args.dataset, split='train', streaming=True)
-    dw = DatasetWriter(args.begin, args.end, args.parquet_start, args.output_dataset, args.output_dataset_json)
+    dw = DatasetWriter(args.output_dataset, args.output_dataset_json, args.begin, args.end)
     dw.process(ds, process_module_wrapper, args)
 
 @ray.remote
