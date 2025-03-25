@@ -10,7 +10,13 @@ from argparse import Namespace
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG)
 
-from input_gen.utils import InputGenReplay, InputGenGenerate, Input, InputGenError, InputGenInstrumentationError
+from input_gen.utils import (
+    InputGenReplay,
+    InputGenGenerate,
+    Input,
+    InputGenError,
+    InputGenInstrumentationError,
+)
 
 TEST_MODULE = b"""
 define dso_local void @_Z8vec_initPdi(ptr noundef captures(none) %a, i32 noundef %n) local_unnamed_addr #0 {
@@ -36,35 +42,36 @@ for.body:                                         ; preds = %for.body.preheader,
 attributes #0 = { inputgen_entry }
 """
 
+
 # class InputGenTest(tf.test.TestCase):
 class GenCompileLoopInputsTest(unittest.TestCase):
     def test_input_gen(self):
         args = Namespace(
-            mclang=['--gcc-toolchain=/opt/rh/gcc-toolset-14/root'],
+            mclang=["--gcc-toolchain=/opt/rh/gcc-toolset-14/root"],
             mllvm=[],
             save_temps=False,
-            temp_dir=None
+            temp_dir=None,
         )
         data = dict()
-        data['content'] = TEST_MODULE
-        data['language'] = 'c'
+        data["content"] = TEST_MODULE
+        data["language"] = "c"
         loops = generate_com_pile_loop.process_module_wrapper_local(args, 10, data)
         self.assertIsNotNone(loops)
-        logger.debug('loops')
+        logger.debug("loops")
         logger.debug(loops)
         self.assertEqual(loops.i, 10)
         ds = datasets.Dataset.from_pandas(loops.df)
         logger.debug(ds)
         loop = ds[0]
-        logger.debug('loop')
+        logger.debug("loop")
         logger.debug(loop)
 
         args = Namespace(
-            mclang=['--gcc-toolchain=/opt/rh/gcc-toolset-14/root'],
+            mclang=["--gcc-toolchain=/opt/rh/gcc-toolset-14/root"],
             mllvm=[],
             save_temps=False,
             temp_dir=None,
-            debug_instrumentation=False
+            debug_instrumentation=False,
         )
         loop_inputs = generate_com_pile_loop_inputs.process_module(args, 13, loop)
         self.assertIsNotNone(loop_inputs)
@@ -72,6 +79,6 @@ class GenCompileLoopInputsTest(unittest.TestCase):
         logger.debug(loop_inputs.df)
 
 
-if __name__ == '__main__':
-  # tf.test.main()
-  unittest.main()
+if __name__ == "__main__":
+    # tf.test.main()
+    unittest.main()

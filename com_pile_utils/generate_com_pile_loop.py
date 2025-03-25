@@ -2,8 +2,7 @@
 # Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 # See https://llvm.org/LICENSE.txt for license information.
 # SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
-"""Tool for generating ComPileLoop from ComPile
-"""
+"""Tool for generating ComPileLoop from ComPile"""
 
 import argparse
 import os
@@ -23,67 +22,70 @@ from dataset_writer import DatasetWriter, ProcessResult
 logger = logging.getLogger(__name__)
 
 if sys.version_info.major == 3 and sys.version_info.minor < 12:
-    print('This script needs python version >= 3.12', file=sys.stderr)
+    print("This script needs python version >= 3.12", file=sys.stderr)
     exit(1)
 
+
 def parse_args_and_run():
-    parser = argparse.ArgumentParser(
-        description='A tool for making a LLVM IR loop dataset'
-    )
+    parser = argparse.ArgumentParser(description="A tool for making a LLVM IR loop dataset")
 
-    parser.add_argument('--language', default='c')
+    parser.add_argument("--language", default="c")
 
-    parser.add_argument('--save-temps', action='store_true', default=False)
-    parser.add_argument('--temp-dir', default=None)
+    parser.add_argument("--save-temps", action="store_true", default=False)
+    parser.add_argument("--temp-dir", default=None)
 
-    parser.add_argument('--dataset', required=True)
-    parser.add_argument('--output-dataset', required=True)
-    parser.add_argument('--output-dataset-json', default=None)
-    parser.add_argument('--begin', default=0, type=int)
-    parser.add_argument('--end', default=None, type=int)
+    parser.add_argument("--dataset", required=True)
+    parser.add_argument("--output-dataset", required=True)
+    parser.add_argument("--output-dataset-json", default=None)
+    parser.add_argument("--begin", default=0, type=int)
+    parser.add_argument("--end", default=None, type=int)
 
     args = parser.parse_args()
 
-    ds = load_dataset(os.path.join(args.dataset, args.language), split='train', streaming=True)
+    ds = load_dataset(os.path.join(args.dataset, args.language), split="train", streaming=True)
 
     dw = DatasetWriter(args.output_dataset, args.output_dataset_json, args.begin, args.end)
     dw.process(ds, process_module_wrapper, args)
 
+
 @ray.remote
 def process_module_wrapper(args, i, data):
-    return process_module(data['content'], data['language'], i, args)
+    return process_module(data["content"], data["language"], i, args)
+
+
 def process_module_wrapper_local(args, i, data):
-    return process_module(data['content'], data['language'], i, args)
+    return process_module(data["content"], data["language"], i, args)
+
 
 def process_module(module, language, idx, args):
     with tempfile.TemporaryDirectory(dir=args.temp_dir, delete=(not args.save_temps)) as outdir:
         return process_module_in_dir(module, language, idx, outdir)
 
+
 def process_module_in_dir(module, language, idx, temp_outdir):
     size_estimate = 0
 
-    prefix = str(os.path.join(temp_outdir, 'output.'))
-    suffix = '.bc'
+    prefix = str(os.path.join(temp_outdir, "output."))
+    suffix = ".bc"
     cmd = [
-        'llvm-extract-loops',
-        '-',
-        '--output-prefix', prefix,
-        '--output-suffix', suffix,
+        "llvm-extract-loops",
+        "-",
+        "--output-prefix",
+        prefix,
+        "--output-suffix",
+        suffix,
     ]
-    logger.debug(' '.join(cmd))
+    logger.debug(" ".join(cmd))
     with subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            stdin=subprocess.PIPE) as proc:
-        outs, errs = proc.communicate(
-            input=module)
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.PIPE
+    ) as proc:
+        outs, errs = proc.communicate(input=module)
         if proc.wait() != 0:
-            logger.debug('llvm-extract-loops failed')
-            logger.debug('outs')
-            logger.debug(outs.decode('utf-8'))
-            logger.debug('errs')
-            logger.debug(errs.decode('utf-8'))
+            logger.debug("llvm-extract-loops failed")
+            logger.debug("outs")
+            logger.debug(outs.decode("utf-8"))
+            logger.debug("errs")
+            logger.debug(errs.decode("utf-8"))
             return None
 
     dfs = []
@@ -91,17 +93,17 @@ def process_module_in_dir(module, language, idx, temp_outdir):
     while True:
         try:
             module_path = prefix + str(i) + suffix
-            metadata_path = module_path + '.json'
+            metadata_path = module_path + ".json"
 
-            with open(module_path, 'br') as module_file:
+            with open(module_path, "br") as module_file:
                 loop_module = module_file.read()
 
-            with open(metadata_path, 'r') as metadata_file:
+            with open(metadata_path, "r") as metadata_file:
                 data = json.load(metadata_file)
 
-            data['language_in_compile'] = language
-            data['module_idx_in_compile'] = idx
-            data['module'] = loop_module
+            data["language_in_compile"] = language
+            data["module_idx_in_compile"] = idx
+            data["module"] = loop_module
 
             size_estimate += len(loop_module)
 
@@ -112,11 +114,12 @@ def process_module_in_dir(module, language, idx, temp_outdir):
             break
         i += 1
 
-    logger.debug(f'len {len(dfs)}')
+    logger.debug(f"len {len(dfs)}")
     if len(dfs) == 0:
         return None
 
     return ProcessResult(pandas.concat(dfs), size_estimate, idx)
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     parse_args_and_run()
