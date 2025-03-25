@@ -24,17 +24,28 @@ from typing import Dict, Tuple, BinaryIO, Union, List, Optional, Iterable
 
 logger = logging.getLogger(__name__)
 
+ANY = '(.*)'
+UINT_REGEX = '([0-9]+)'
+INT_REGEX = '(-?[0-9]+)'
+DOT = '\\.'
+RE_MATCH_TIMER = re.compile(f'InputGenTimer {ANY}: {UINT_REGEX} nanoseconds')
+RE_MATCH_TIMER_NAME = re.compile(f'{ANY} {UINT_REGEX}')
+RE_MATCH_INPUT_FILENAME = re.compile(f'{ANY}{DOT}{UINT_REGEX}{DOT}{UINT_REGEX}{DOT}{INT_REGEX}{DOT}{UINT_REGEX}{DOT}inp')
+
 @dataclasses.dataclass(frozen=True)
 class Input:
     entry_no: int
     index: int
     status: int
+    seed: int
+    timers: Dict
     data: bytes
 
 @dataclasses.dataclass(frozen=True)
 class ReplayResult:
     outs: bytes
     errs: bytes
+    timers: Dict
 
 class InputGenError(Exception):
     pass
@@ -186,6 +197,8 @@ class InputGenReplay(InputGenUtils):
 
         super().__init__(working_dir, save_temps, mclang, mllvm, temp_dir)
 
+        self.prepare()
+
     def check_prep_done(self):
         if not self.preparation_done:
             raise InputGenError("Preparation not done");
@@ -195,6 +208,7 @@ class InputGenReplay(InputGenUtils):
             raise InputGenError(f'Entry no {entry_no} out of range. {self.num_entries} available.');
 
     def prepare(self):
+        assert not self.preparation_done
         self.save_temp(self.mod, 'original_module', binary=True);
 
         self.repl_exec_path = os.path.join(self.working_dir, 'repl')
@@ -245,7 +259,10 @@ class InputGenReplay(InputGenUtils):
             if num is not None and i == num:
                 break
             outs, errs = self.get_output(cmd, allow_fail=True, timeout=timeout)
-            yield ReplayResult(outs, errs)
+            timers = dict()
+            for timer_name, timer_time in RE_MATCH_TIMER.findall(errs.decode('utf-8')):
+                timers[timer_name] = int(timer_time)
+            yield ReplayResult(outs, errs, timers)
             i += 1
 
 class InputGenGenerate(InputGenUtils):
@@ -260,6 +277,8 @@ class InputGenGenerate(InputGenUtils):
         self.repl_mod = None
 
         super().__init__(working_dir, save_temps, mclang, mllvm, temp_dir)
+
+        self.prepare()
 
     def prepare(self):
         self.save_temp(self.mod, 'original_module', binary=True);
@@ -282,44 +301,90 @@ class InputGenGenerate(InputGenUtils):
         if not self.preparation_done:
             raise InputGenError("Preparation not done");
 
-    def generate(self, entry_no=0, num_inputs=1, num_threads=1, first_input=0, seed=42, timeout=None):
+    def generate_batched(self, entry_no=0, num_inputs=1, num_threads=1, first_input=0, seed=42, timeout=None):
         self.check_prep_done()
-        cmd = [
-            self.gen_exec_path,
-            str(entry_no),
-            str(num_inputs),
-            str(num_threads),
-            str(first_input),
-            str(seed)
-        ]
-        outs, errs = self.get_output(cmd, timeout=timeout)
+        try:
+            cmd = [
+                self.gen_exec_path,
+                str(entry_no),
+                str(num_inputs),
+                str(num_threads),
+                str(first_input),
+                str(seed)
+            ]
+            outs, errs = self.get_output(cmd, timeout=timeout)
 
-        logger.debug(f'Outs: {outs.decode("utf-8")}')
-        logger.debug(f'Errs: {errs.decode("utf-8")}')
+            logger.debug(f'Outs: {outs.decode("utf-8")}')
+            logger.debug(f'Errs: {errs.decode("utf-8")}')
 
-    def get_generated_inputs(self):
+        except InputGenError as e:
+            raise e
+        finally:
+            inputs = []
+            input_idxs = set(range(first_input, first_input + num_inputs))
+            input_timers = {i: dict() for i in input_idxs}
+            for timer_name, timer_time in RE_MATCH_TIMER.findall(errs.decode('utf-8')):
+                timer_idx = None
+                name_match = RE_MATCH_TIMER_NAME.fullmatch(timer_name)
+                if name_match is not None:
+                    timer_idx = int(name_match.group(2))
+                    timer_name = name_match.group(1)
+                    input_timers[timer_idx][timer_name] = int(timer_time)
+                else:
+                    for d in input_timers.values():
+                        d[timer_name] = int(timer_time)
+            logger.debug(input_timers)
+
+            inconsistent = False
+            for filename in os.listdir(self.working_dir):
+                re_match = RE_MATCH_INPUT_FILENAME.fullmatch(filename)
+                logger.debug(filename)
+                logger.debug(re_match)
+                if re_match is None:
+                    continue
+                logger.debug(re_match.groups())
+                inpt_gen_exe = re_match.group(1)
+                inpt_entry_no = int(re_match.group(2))
+                inpt_input_idx = int(re_match.group(3))
+                inpt_exit_code = int(re_match.group(4))
+                inpt_seed = int(re_match.group(5))
+
+                if any([inpt_gen_exe != 'gen',
+                        inpt_entry_no != entry_no,
+                        inpt_seed != seed,
+                        inpt_input_idx not in input_idxs]):
+                    continue
+
+                full_path = os.path.join(self.working_dir, filename)
+                with open(full_path, 'rb') as f:
+                    data = f.read()
+
+                inputs.append(Input(
+                    entry_no,
+                    inpt_input_idx,
+                    inpt_exit_code,
+                    seed,
+                    input_timers[inpt_input_idx],
+                    data,
+                ))
+
+                if not self.save_temps:
+                    os.remove(full_path)
+            return inputs
+
+    def generate(self, entry_no=0, num_inputs=1, first_input=0, seed=42, timeout=None):
         self.check_prep_done()
-        input_files = glob.glob(self.gen_exec_path + '*.inp')
-        logger.debug(f'input_files: {input_files}')
-
         inputs = []
-        for input_file in input_files:
-            uint_regex = '([0-9]+)'
-            int_regex = '(-?[0-9]+)'
-            dot = '\\.'
-            re_match = re.match(f'.*{dot}{uint_regex}{dot}{uint_regex}{dot}{int_regex}{dot}inp', input_file)
-            if re_match is None:
-                raise InputGenError(f'Could not match {input_file}')
-
-            entry_no = int(re_match.group(1))
-            input_idx = int(re_match.group(2))
-            exit_code = int(re_match.group(3))
-
-            with open(input_file, 'rb') as f:
-                data = f.read()
-
-            inputs.append(Input(entry_no, input_idx, exit_code, data))
-
+        for input_idx in range(first_input, first_input + num_inputs):
+            inpt = self.generate_batched(
+                entry_no=entry_no,
+                num_inputs=num_inputs,
+                num_threads=1,
+                first_input=first_input,
+                seed=seed,
+                timeout=timeout
+            )
+            inputs += inpt
         return inputs
 
     def get_num_entries(self):
@@ -373,18 +438,15 @@ def main(args):
 
     # Generate inputs
     igg = InputGenGenerate(mod, args.temp_dir, args.save_temps, args.mclang, args.mllvm, mode, args.temp_dir)
-    igg.prepare()
-    igg.generate()
+    inputs = igg.generate()
 
     # Get generated inputs and module for replay
     replay_module = igg.get_repl_mod()
-    inputs = igg.get_generated_inputs()
 
     igr = InputGenReplay(
         replay_module,
         args.temp_dir, args.save_temps, args.mclang, args.mllvm, args.temp_dir
     )
-    igr.prepare()
 
     for inpt in inputs:
         num = 5
