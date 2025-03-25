@@ -14,10 +14,13 @@ import signal
 import sys
 import pandas
 import ray
+import logging
 
 from datasets import load_dataset
 
-from dataset_writer import DatasetWriter
+from dataset_writer import DatasetWriter, ProcessResult
+
+logger = logging.getLogger(__name__)
 
 if sys.version_info.major == 3 and sys.version_info.minor < 12:
     print('This script needs python version >= 3.12', file=sys.stderr)
@@ -49,6 +52,8 @@ def parse_args_and_run():
 @ray.remote
 def process_module_wrapper(args, i, data):
     return process_module(data['content'], data['language'], i, args)
+def process_module_wrapper_local(args, i, data):
+    return process_module(data['content'], data['language'], i, args)
 
 def process_module(module, language, idx, args):
     with tempfile.TemporaryDirectory(dir=args.temp_dir, delete=(not args.save_temps)) as outdir:
@@ -65,16 +70,21 @@ def process_module_in_dir(module, language, idx, temp_outdir):
         '--output-prefix', prefix,
         '--output-suffix', suffix,
     ]
-    verbose = False
-    if verbose:
-        print(' '.join(cmd))
+    logger.debug(' '.join(cmd))
     with subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
+            stderr=subprocess.PIPE,
             stdin=subprocess.PIPE) as proc:
-        output = proc.communicate(
-            input=module)[0].decode('utf-8')
+        outs, errs = proc.communicate(
+            input=module)
+        if proc.wait() != 0:
+            logger.debug('llvm-extract-loops failed')
+            logger.debug('outs')
+            logger.debug(outs.decode('utf-8'))
+            logger.debug('errs')
+            logger.debug(errs.decode('utf-8'))
+            return None
 
     dfs = []
     i = 0
@@ -83,13 +93,11 @@ def process_module_in_dir(module, language, idx, temp_outdir):
             module_path = prefix + str(i) + suffix
             metadata_path = module_path + '.json'
 
-            module_file = open(module_path, 'br')
-            loop_module = module_file.read()
-            module_file.close()
+            with open(module_path, 'br') as module_file:
+                loop_module = module_file.read()
 
-            metadata_file = open(metadata_path, 'r')
-            data = json.load(metadata_file)
-            metadata_file.close()
+            with open(metadata_path, 'r') as metadata_file:
+                data = json.load(metadata_file)
 
             data['language_in_compile'] = language
             data['module_idx_in_compile'] = idx
@@ -100,9 +108,11 @@ def process_module_in_dir(module, language, idx, temp_outdir):
             dfs.append(pandas.DataFrame(data, index=[0]))
 
         except OSError as e:
+            logger.debug(e)
             break
         i += 1
 
+    logger.debug(f'len {len(dfs)}')
     if len(dfs) == 0:
         return None
 

@@ -53,7 +53,6 @@ def process_module(data, l, dump_llvm, args):
         temp_dir=args.temp_dir,
     )
 
-    igm.prepare()
     for inpt in data['inputs']:
         inpt = Input(**inpt)
         num = 2

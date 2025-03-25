@@ -28,6 +28,7 @@ class InputGenTest(unittest.TestCase):
             mclang=['--gcc-toolchain=/opt/rh/gcc-toolset-14/root'],
         )
         inputs = igg.generate(entry_no=0, num_inputs=1, first_input=0, seed=43)
+
         logger.debug(inputs)
         self.assertTrue(len(inputs) == 1)
         inpt = inputs[0]

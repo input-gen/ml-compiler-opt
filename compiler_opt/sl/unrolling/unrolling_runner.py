@@ -453,8 +453,6 @@ def generate_samples(decision_results, inputs, replay_options):
             **replay_options
         )
 
-        igm.prepare()
-
         for inpt in inputs:
             num = 5
             timeout=0.2

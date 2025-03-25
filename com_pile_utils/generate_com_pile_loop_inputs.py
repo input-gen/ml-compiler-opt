@@ -23,7 +23,7 @@ import ray
 from datasets import load_dataset
 from typing import Dict, Tuple, BinaryIO, Union, List, Optional, Iterable
 
-from input_gen.utils import InputGenGenerate, Input, InputGenError, InputGenInstrumentationError
+from input_gen.utils import InputGenReplay, InputGenGenerate, Input, InputGenError, InputGenInstrumentationError
 from dataset_writer import DatasetWriter, ProcessResult
 
 logger = logging.getLogger(__name__)
@@ -65,10 +65,12 @@ def main(args):
 
     ds = load_dataset(args.dataset, split='train', streaming=True)
     dw = DatasetWriter(args.output_dataset, args.output_dataset_json, args.begin, args.end)
-    dw.process(ds, process_module_wrapper, args)
+    dw.process(ds, process_module, args)
 
 @ray.remote
 def process_module_wrapper(args, i, data):
+    return process_module(args, i, data)
+def process_module(args, i, data):
     instrumentationLogger = logging.getLogger('input_gen_instrumentation_logger')
     if args.debug_instrumentation:
         instrumentationLogger.setLevel(logging.DEBUG)
@@ -76,33 +78,63 @@ def process_module_wrapper(args, i, data):
         instrumentationLogger.setLevel(logging.WARNING)
 
     try:
-        igm = InputGenGenerate(
-            data['module'],
+
+        INPUTGEN_TIMEOUT = 1
+        INPUTS_TO_GENERATE = 5
+
+        def to_dict(**kwargs):
+            return kwargs
+        common_args = to_dict(
             working_dir=None,
             save_temps=args.save_temps,
             mclang=args.mclang,
             mllvm=args.mllvm,
+            temp_dir=args.temp_dir,
+        )
+
+        igg = InputGenGenerate(
+            data['module'],
             entries=['__llvm_extracted_loop'],
-            temp_dir=args.temp_dir)
+            **common_args,
+        )
+        assert igg.get_num_entries() == 1
 
-        igm.prepare()
-        assert igm.get_num_entries() == 1
-        igm.generate(entry_no=0, num_inputs=5, timeout=5)
+        inputs = [dataclasses.asdict(i) for i in
+                  igg.generate(entry_no=0, num_inputs=INPUTS_TO_GENERATE, timeout=INPUTGEN_TIMEOUT)]
 
-        data['inputs'] = None
-        data['module'] = igm.get_repl_mod()
-        size = len(data['module'])
-        inputs = [dataclasses.asdict(i) for i in igm.get_generated_inputs()]
+        data['module'] = igg.get_repl_mod()
 
         logger.debug(data['module'])
-        logger.debug(inputs)
-
-        df = pandas.DataFrame(data, index=[0])
-        df.at[0, 'inputs'] = inputs
 
         # TODO we want to gather some info on the inputs such as size, est. runtime,
         # We should also probably run the generated inputs and make sure they
         # run successfully.
+        igr = InputGenReplay(
+            data['module'],
+            **common_args,
+        )
+
+        logger.debug(inputs)
+        data['inputs_generated'] = len(inputs)
+
+        inputs_normal_exit = []
+        inputs_abnormal_exit = []
+        for inpt in inputs:
+            res = next(igr.replay_input(inpt['data'], entry_no=0, num=1, timeout=INPUTGEN_TIMEOUT))
+            if res is None:
+                inputs_abnormal_exit.append(inpt)
+            else:
+                inputs_normal_exit.append(inpt)
+
+        size = len(data['module'])
+
+        data['inputs_normal_exit'] = None
+        data['inputs_abnormal_exit'] = None
+        data['inputs_normal_exit_generated'] = len(inputs_normal_exit)
+        data['inputs_abnormal_exit_generated'] = len(inputs_abnormal_exit)
+        df = pandas.DataFrame(data, index=[0])
+        df.at[0, 'inputs_normal_exit'] = inputs_normal_exit
+        df.at[0, 'inputs_abnormal_exit'] = inputs_abnormal_exit
 
         return ProcessResult(df, size, i)
 

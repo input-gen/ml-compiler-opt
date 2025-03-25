@@ -115,7 +115,7 @@ class InputGenUtils:
             f.write(content)
 
     def get_output(self, cmd, stdin=None, allow_fail=False, timeout=None, ExecFailTy=InputGenExecError):
-        logger.debug(f'Running cmd: {" ".join(cmd)}.')
+        logger.debug(f'Running cmd: {" ".join(cmd)}')
         with subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
@@ -378,7 +378,7 @@ class InputGenGenerate(InputGenUtils):
         for input_idx in range(first_input, first_input + num_inputs):
             inpt = self.generate_batched(
                 entry_no=entry_no,
-                num_inputs=num_inputs,
+                num_inputs=1,
                 num_threads=1,
                 first_input=first_input,
                 seed=seed,
