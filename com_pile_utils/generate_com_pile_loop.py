@@ -6,6 +6,7 @@
 
 import argparse
 import os
+import shutil
 import tempfile
 import subprocess
 import json
@@ -20,11 +21,6 @@ from datasets import load_dataset
 from dataset_writer import DatasetWriter, ProcessResult
 
 logger = logging.getLogger(__name__)
-
-if sys.version_info.major == 3 and sys.version_info.minor < 12:
-    print("This script needs python version >= 3.12", file=sys.stderr)
-    exit(1)
-
 
 def parse_args_and_run():
     parser = argparse.ArgumentParser(description="A tool for making a LLVM IR loop dataset")
@@ -58,8 +54,12 @@ def process_module_wrapper_local(args, i, data):
 
 
 def process_module(module, language, idx, args):
-    with tempfile.TemporaryDirectory(dir=args.temp_dir, delete=(not args.save_temps)) as outdir:
+    try:
+        outdir = tempfile.mkdtemp(dir=args.temp_dir)
         return process_module_in_dir(module, language, idx, outdir)
+    finally:
+        if not args.save_temps:
+            shutil.rmtree(outdir)
 
 
 def process_module_in_dir(module, language, idx, temp_outdir):

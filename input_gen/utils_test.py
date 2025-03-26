@@ -32,7 +32,7 @@ class InputGenTest(unittest.TestCase):
     def test_input_gen(self):
         igg = InputGenGenerate(
             TEST_MODULE,
-            mclang=["--gcc-toolchain=/opt/rh/gcc-toolset-14/root"],
+            mclang=[],
         )
         inputs = igg.generate(entry_no=0, num_inputs=1, first_input=0, seed=43)
 
@@ -53,7 +53,7 @@ class InputGenTest(unittest.TestCase):
 
         igr = InputGenReplay(
             repl_mod,
-            mclang=["--gcc-toolchain=/opt/rh/gcc-toolset-14/root"],
+            mclang=[],
         )
         for inpt in inputs:
             res = next(igr.replay_input(inpt.data, entry_no=0, num=1))

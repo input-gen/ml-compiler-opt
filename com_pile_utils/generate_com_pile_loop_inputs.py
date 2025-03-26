@@ -33,11 +33,6 @@ from dataset_writer import DatasetWriter, ProcessResult
 
 logger = logging.getLogger(__name__)
 
-if sys.version_info.major == 3 and sys.version_info.minor < 12:
-    logger.error("This script needs python version >= 3.12")
-    exit(1)
-
-
 def parse_args_and_run():
     parser = argparse.ArgumentParser(description="Generating inputs for ComPileLoop")
 

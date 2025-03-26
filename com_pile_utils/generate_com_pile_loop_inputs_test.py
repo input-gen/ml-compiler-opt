@@ -47,7 +47,7 @@ attributes #0 = { inputgen_entry }
 class GenCompileLoopInputsTest(unittest.TestCase):
     def test_input_gen(self):
         args = Namespace(
-            mclang=["--gcc-toolchain=/opt/rh/gcc-toolset-14/root"],
+            mclang=[],
             mllvm=[],
             save_temps=False,
             temp_dir=None,
@@ -67,7 +67,7 @@ class GenCompileLoopInputsTest(unittest.TestCase):
         logger.debug(loop)
 
         args = Namespace(
-            mclang=["--gcc-toolchain=/opt/rh/gcc-toolset-14/root"],
+            mclang=[],
             mllvm=[],
             save_temps=False,
             temp_dir=None,
