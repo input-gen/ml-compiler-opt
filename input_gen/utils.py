@@ -125,7 +125,7 @@ class InputGenUtils:
             f.write(content)
 
     def get_output(
-        self, cmd, stdin=None, allow_fail=False, timeout=None, ExecFailTy=InputGenExecError
+            self, cmd, stdin=None, allow_fail=False, env=None, timeout=None, ExecFailTy=InputGenExecError
     ):
         logger.debug(f"Running cmd: {' '.join(cmd)}")
         with subprocess.Popen(
@@ -133,6 +133,7 @@ class InputGenUtils:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             stdin=(subprocess.PIPE if stdin is not None else None),
+            env=env,
         ) as proc:
             try:
                 outs, errs = proc.communicate(input=stdin, timeout=timeout)
@@ -340,7 +341,7 @@ class InputGenGenerate(InputGenUtils):
             raise InputGenError("Preparation not done")
 
     def generate_batched(
-        self, entry_no=0, num_inputs=1, num_threads=1, first_input=0, seed=42, timeout=None
+        self, entry_no=0, num_inputs=1, num_threads=1, first_input=0, seed=42, int_min=-100, int_max=128, timeout=None
     ):
         self.check_prep_done()
         try:
@@ -352,7 +353,10 @@ class InputGenGenerate(InputGenUtils):
                 str(first_input),
                 str(seed),
             ]
-            outs, errs = self.get_output(cmd, timeout=timeout)
+            env = os.environ
+            env['INPUTGEN_INT_MIN'] = str(int_min)
+            env['INPUTGEN_INT_MAX'] = str(int_max)
+            outs, errs = self.get_output(cmd, env=env, timeout=timeout)
 
             logger.debug(f"Outs: {outs.decode('utf-8')}")
             logger.debug(f"Errs: {errs.decode('utf-8')}")
@@ -418,7 +422,9 @@ class InputGenGenerate(InputGenUtils):
                     os.remove(full_path)
             return inputs
 
-    def generate(self, entry_no=0, num_inputs=1, first_input=0, seed=42, timeout=None):
+    def generate(
+        self, entry_no=0, num_inputs=1, first_input=0, seed=42, int_min=-100, int_max=100, timeout=None
+    ):
         self.check_prep_done()
         inputs = []
         for input_idx in range(first_input, first_input + num_inputs):
