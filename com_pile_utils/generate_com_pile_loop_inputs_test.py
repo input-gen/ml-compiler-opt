@@ -77,6 +77,10 @@ class GenCompileLoopInputsTest(unittest.TestCase):
         self.assertIsNotNone(loop_inputs)
         self.assertEqual(loop_inputs.i, 13)
         logger.debug(loop_inputs.df)
+        logger.debug(loop_inputs.df.loc[0])
+        logger.debug(loop_inputs.df.loc[0]["inputs_normal_exit"])
+        self.assertGreater(len(loop_inputs.df.loc[0]["inputs_normal_exit"]), 0)
+        self.assertEqual(len(loop_inputs.df.loc[0]["inputs_abnormal_exit"]), 0)
 
 
 if __name__ == "__main__":

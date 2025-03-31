@@ -125,7 +125,7 @@ class InputGenUtils:
             f.write(content)
 
     def get_output(
-            self, cmd, stdin=None, allow_fail=False, env=None, timeout=None, ExecFailTy=InputGenExecError
+        self, cmd, stdin=None, allow_fail=False, env=None, timeout=None, ExecFailTy=InputGenExecError
     ):
         logger.debug(f"Running cmd: {' '.join(cmd)}")
         with subprocess.Popen(
@@ -341,7 +341,15 @@ class InputGenGenerate(InputGenUtils):
             raise InputGenError("Preparation not done")
 
     def generate_batched(
-        self, entry_no=0, num_inputs=1, num_threads=1, first_input=0, seed=42, int_min=-100, int_max=128, timeout=None
+        self,
+        entry_no=0,
+        num_inputs=1,
+        num_threads=1,
+        first_input=0,
+        seed=42,
+        int_min=-100,
+        int_max=128,
+        timeout=None,
     ):
         self.check_prep_done()
         try:
@@ -354,8 +362,8 @@ class InputGenGenerate(InputGenUtils):
                 str(seed),
             ]
             env = os.environ
-            env['INPUTGEN_INT_MIN'] = str(int_min)
-            env['INPUTGEN_INT_MAX'] = str(int_max)
+            env["INPUTGEN_INT_MIN"] = str(int_min)
+            env["INPUTGEN_INT_MAX"] = str(int_max)
             outs, errs = self.get_output(cmd, env=env, timeout=timeout)
 
             logger.debug(f"Outs: {outs.decode('utf-8')}")
@@ -379,7 +387,11 @@ class InputGenGenerate(InputGenUtils):
                         d[timer_name] = int(timer_time)
             logger.debug(input_timers)
 
-            inconsistent = False
+            # TODO we can accidentally grab an earlier generated input if
+            # save_temps is on or if we fail to delete for any reason - we
+            # should prbably wrap this whope thing in a temp directory create
+            # delete for each batched input generation
+
             for filename in os.listdir(self.working_dir):
                 re_match = RE_MATCH_INPUT_FILENAME.fullmatch(filename)
                 logger.debug(filename)

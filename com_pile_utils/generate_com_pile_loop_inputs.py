@@ -4,6 +4,7 @@
 # SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 """Tool for generating ComPileLoop+Inputs from ComPileLoop"""
 
+import random
 import argparse
 import tempfile
 import re
@@ -32,6 +33,7 @@ from input_gen.utils import (
 from dataset_writer import DatasetWriter, ProcessResult
 
 logger = logging.getLogger(__name__)
+
 
 def parse_args_and_run():
     parser = argparse.ArgumentParser(description="Generating inputs for ComPileLoop")
@@ -82,6 +84,17 @@ def process_module(args, i, data):
 
     try:
         INPUTGEN_TIMEOUT = 1
+        NUM_INPUTS = 5
+        # tuples of (int_min, int_max, num_inputs)
+        INPUTGEN_STRATEGY = [
+            (20, 40, NUM_INPUTS),
+            (-40, 40, NUM_INPUTS),
+            (64, 128, NUM_INPUTS),
+            (-100, 128, NUM_INPUTS),
+            (500, 1000, NUM_INPUTS),
+            (-1000, 1000, NUM_INPUTS),
+        ]
+
         INPUTS_TO_GENERATE = 5
 
         def to_dict(**kwargs):
@@ -102,10 +115,25 @@ def process_module(args, i, data):
         )
         assert igg.get_num_entries() == 1
 
-        inputs = [
-            dataclasses.asdict(i)
-            for i in igg.generate(entry_no=0, num_inputs=INPUTS_TO_GENERATE, timeout=INPUTGEN_TIMEOUT)
-        ]
+        inputs = []
+        for int_min, int_max, num_inputs in INPUTGEN_STRATEGY:
+            # We do a separate igg.generate for each single input because we
+            # want different seeds for each one.
+            for i in range(num_inputs):
+                # 0 to int32_t_max
+                seed = random.randint(0, 2147483647)
+                inputs += [
+                    dataclasses.asdict(i)
+                    for i in igg.generate(
+                        entry_no=0,
+                        num_inputs=1,
+                        first_input=i,
+                        timeout=INPUTGEN_TIMEOUT,
+                        int_min=int_min,
+                        int_max=int_max,
+                        seed=seed,
+                    )
+                ]
 
         data["module"] = igg.get_repl_mod()
 
@@ -120,23 +148,24 @@ def process_module(args, i, data):
         )
 
         logger.debug(inputs)
-        data["inputs_generated"] = len(inputs)
+        data["inputs_generated_num"] = len(inputs)
 
         inputs_normal_exit = []
         inputs_abnormal_exit = []
         for inpt in inputs:
             res = next(igr.replay_input(inpt["data"], entry_no=0, num=1, timeout=INPUTGEN_TIMEOUT))
-            if res is None:
+            if res is None or "replay" not in res.timers:
                 inputs_abnormal_exit.append(inpt)
             else:
+                inpt["replay_time"] = res.timers["replay"]
                 inputs_normal_exit.append(inpt)
 
         size = len(data["module"])
 
         data["inputs_normal_exit"] = None
         data["inputs_abnormal_exit"] = None
-        data["inputs_normal_exit_generated"] = len(inputs_normal_exit)
-        data["inputs_abnormal_exit_generated"] = len(inputs_abnormal_exit)
+        data["inputs_normal_exit_generated_num"] = len(inputs_normal_exit)
+        data["inputs_abnormal_exit_generated_num"] = len(inputs_abnormal_exit)
         df = pandas.DataFrame(data, index=[0])
         df.at[0, "inputs_normal_exit"] = inputs_normal_exit
         df.at[0, "inputs_abnormal_exit"] = inputs_abnormal_exit

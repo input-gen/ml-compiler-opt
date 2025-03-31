@@ -22,6 +22,7 @@ from dataset_writer import DatasetWriter, ProcessResult
 
 logger = logging.getLogger(__name__)
 
+
 def parse_args_and_run():
     parser = argparse.ArgumentParser(description="A tool for making a LLVM IR loop dataset")
 
