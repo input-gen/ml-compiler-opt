@@ -71,11 +71,11 @@ def main(args):
 
 
 @ray.remote
-def process_module_wrapper(args, i, data):
-    return process_module(args, i, data)
+def process_module_wrapper(args, idx, data):
+    return process_module(args, idx, data)
 
 
-def process_module(args, i, data):
+def process_module(args, idx, data):
     instrumentationLogger = logging.getLogger("input_gen_instrumentation_logger")
     if args.debug_instrumentation:
         instrumentationLogger.setLevel(logging.DEBUG)
@@ -122,18 +122,21 @@ def process_module(args, i, data):
             for i in range(num_inputs):
                 # 0 to int32_t_max
                 seed = random.randint(0, 2147483647)
-                inputs += [
-                    dataclasses.asdict(i)
-                    for i in igg.generate(
-                        entry_no=0,
-                        num_inputs=1,
-                        first_input=i,
-                        timeout=INPUTGEN_TIMEOUT,
-                        int_min=int_min,
-                        int_max=int_max,
-                        seed=seed,
-                    )
-                ]
+                try:
+                    inputs += [
+                        dataclasses.asdict(i)
+                        for i in igg.generate(
+                            entry_no=0,
+                            num_inputs=1,
+                            first_input=i,
+                            timeout=INPUTGEN_TIMEOUT,
+                            int_min=int_min,
+                            int_max=int_max,
+                            seed=seed,
+                        )
+                    ]
+                except InputGenError as e:
+                    logger.debug(e)
 
         data["module"] = igg.get_repl_mod()
 
@@ -170,14 +173,15 @@ def process_module(args, i, data):
         df.at[0, "inputs_normal_exit"] = inputs_normal_exit
         df.at[0, "inputs_abnormal_exit"] = inputs_abnormal_exit
 
-        return ProcessResult(df, size, i)
+        return ProcessResult(df, size, idx)
 
     except InputGenInstrumentationError as e:
-        instrumentationLogger.debug(f"Instrumentation error in module {i}")
+        instrumentationLogger.debug(f"Instrumentation error in module {idx}")
         instrumentationLogger.debug(e)
         return None
     except InputGenError as e:
-        logger.debug(f"InputGenGenerate failed: {e}")
+        logger.debug(f"InputGenGenerate failed in module {idx}")
+        logger.debug(e)
         return None
 
 

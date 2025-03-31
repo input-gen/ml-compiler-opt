@@ -20,6 +20,9 @@ from input_gen.utils import (
 
 TEST_MODULE = b"""
 define dso_local void @_Z8vec_initPdi(ptr noundef captures(none) %a, i32 noundef %n) local_unnamed_addr #0 {
+entry0:
+  %cmp1 = icmp sle i32 %n, 10000
+  br i1 %cmp1, label %entry, label %for.cond.cleanup
 entry:
   %cmp9 = icmp sgt i32 %n, 0
   br i1 %cmp9, label %for.body.preheader, label %for.cond.cleanup
@@ -74,6 +77,7 @@ class GenCompileLoopInputsTest(unittest.TestCase):
             debug_instrumentation=False,
         )
         loop_inputs = generate_com_pile_loop_inputs.process_module(args, 13, loop)
+        logger.debug(loop_inputs)
         self.assertIsNotNone(loop_inputs)
         self.assertEqual(loop_inputs.i, 13)
         logger.debug(loop_inputs.df)

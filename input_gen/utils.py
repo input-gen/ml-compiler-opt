@@ -369,9 +369,6 @@ class InputGenGenerate(InputGenUtils):
             logger.debug(f"Outs: {outs.decode('utf-8')}")
             logger.debug(f"Errs: {errs.decode('utf-8')}")
 
-        except InputGenError as e:
-            raise e
-        finally:
             inputs = []
             input_idxs = set(range(first_input, first_input + num_inputs))
             input_timers = {i: dict() for i in input_idxs}
@@ -430,9 +427,19 @@ class InputGenGenerate(InputGenUtils):
                     )
                 )
 
-                if not self.save_temps:
-                    os.remove(full_path)
             return inputs
+
+        except InputGenError as e:
+            raise e
+        finally:
+            for filename in os.listdir(self.working_dir):
+                re_match = RE_MATCH_INPUT_FILENAME.fullmatch(filename)
+                if re_match is None:
+                    continue
+                full_path = os.path.join(self.working_dir, filename)
+                if not self.save_temps:
+                    logger.debug(f"Removing {full_path}")
+                    os.remove(full_path)
 
     def generate(
         self, entry_no=0, num_inputs=1, first_input=0, seed=42, int_min=-100, int_max=100, timeout=None
