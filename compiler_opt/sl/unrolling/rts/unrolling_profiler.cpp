@@ -10,6 +10,11 @@
 #include <iostream>
 #include <optional>
 
+#define XSTR(a) STR(a)
+#define STR(a) #a
+
+constexpr std::string_view CPUSTR(XSTR(CPU));
+
 namespace {
 class MLGOTimer {
 public:
@@ -37,9 +42,16 @@ public:
     // Zen based AMD uarches, it should be cycles_not_in_halt. Good to check
     // what the CyclesCounter value is for the uarch in question in LLVM's
     // x86PfmCounters.td file though.
-    const int get_encoding_result =
-        pfm_get_os_event_encoding("unhalted_core_cycles", PFM_PLM3,
-                                  PFM_OS_PERF_EVENT, &get_encoding_arguments);
+    const char *event;
+    if constexpr (CPUSTR == "AMD")
+      event = "cycles_not_in_halt";
+    else if constexpr (CPUSTR == "INTEL")
+      event = "unhalted_core_cycles";
+    else
+      static_assert("Unknown CPU type");
+
+    const int get_encoding_result = pfm_get_os_event_encoding(
+        event, PFM_PLM3, PFM_OS_PERF_EVENT, &get_encoding_arguments);
     if (fully_qualified_name) {
       free(fully_qualified_name);
     }
