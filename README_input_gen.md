@@ -75,16 +75,41 @@ This will read the dataset and replay all inputs in it.
 
 ### Generating samples for training the unroll heuristic
 
-First change to the root directory of this repo.
+Install the dependencies:
 
-Prepare the runtime for collecting timing information:
 ``` shell
-clang++ -c -emit-llvm -O2 compiler_opt/sl/unrolling/rts/unrolling_profiler.cpp -o compiler_opt/sl/unrolling/rts/unrolling_profiler.bc
+dnf install libpfm-devel
+```
+
+Change to the root directory of this repo.
+
+``` shell
+cd compiler_opt/sl/unrolling/rts/
+make CPU=AMD
+# make CPU=INTEL
+```
+
+Check the compiled timing runtime:
+
+```
+make check
+```
+
+And go back to the root.
+
+```
+cd -
+```
+
+This should result in the following file:
+
+``` shell
+compiler_opt/sl/unrolling/rts/unrolling_profiler.o
 ```
 
 The following can be used to generate training samples
 ``` shell
-PYTHONPATH=$PYTHONPATH:. python3 compiler_opt/sl/unrolling/process_com_pile_loop_inputs.py --dataset path/to/ComPileLoopInputs -mclang=compiler_opt/sl/unrolling/rts/unrolling_profiler.bc
+PYTHONPATH=$PYTHONPATH:. python3 compiler_opt/sl/unrolling/process_com_pile_loop_inputs.py --dataset path/to/ComPileLoopInputs -mclang=compiler_opt/sl/unrolling/rts/unrolling_profiler.o -mclang=-lpfm
 ```
 
 Note the additional `-mclang` flag which links in the profiling runtime.
