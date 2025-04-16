@@ -42,6 +42,7 @@ class Input:
     seed: int
     timers: Dict
     data: bytes
+    replay_time: Optional[int] = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -365,20 +366,32 @@ class InputGenGenerate(InputGenUtils):
             env["INPUTGEN_INT_MIN"] = str(int_min)
             env["INPUTGEN_INT_MAX"] = str(int_max)
             outs, errs = self.get_output(cmd, env=env, timeout=timeout)
+            outs = outs.decode("utf-8")
+            errs = errs.decode("utf-8")
 
-            logger.debug(f"Outs: {outs.decode('utf-8')}")
-            logger.debug(f"Errs: {errs.decode('utf-8')}")
+            logger.debug(f"Outs: {outs}")
+            logger.debug(f"Errs: {errs}")
 
-            inputs = []
             input_idxs = set(range(first_input, first_input + num_inputs))
             input_timers = {i: dict() for i in input_idxs}
-            for timer_name, timer_time in RE_MATCH_TIMER.findall(errs.decode("utf-8")):
+            for timer_name, timer_time in RE_MATCH_TIMER.findall(errs):
                 timer_idx = None
                 name_match = RE_MATCH_TIMER_NAME.fullmatch(timer_name)
                 if name_match is not None:
                     timer_idx = int(name_match.group(2))
                     timer_name = name_match.group(1)
-                    input_timers[timer_idx][timer_name] = int(timer_time)
+                    try:
+                        input_timers[timer_idx][timer_name] = int(timer_time)
+                    except KeyError as e:
+                        keyErrorLogger = logging.getLogger(__name__ + ".timer_key_error")
+                        keyErrorLogger.setLevel(logging.INFO)
+                        keyErrorLogger.error(
+                            f"first_input {first_input} num_inputs {num_inputs} key {timer_idx}"
+                        )
+                        keyErrorLogger.error(f"cmd {cmd}")
+                        keyErrorLogger.error("errs")
+                        keyErrorLogger.error(errs)
+                        return []
                 else:
                     for d in input_timers.values():
                         d[timer_name] = int(timer_time)
@@ -389,6 +402,7 @@ class InputGenGenerate(InputGenUtils):
             # should prbably wrap this whope thing in a temp directory create
             # delete for each batched input generation
 
+            inputs = []
             for filename in os.listdir(self.working_dir):
                 re_match = RE_MATCH_INPUT_FILENAME.fullmatch(filename)
                 logger.debug(filename)

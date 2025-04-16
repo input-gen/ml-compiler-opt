@@ -67,7 +67,7 @@ def main(args):
 
     ds = load_dataset(args.dataset, split="train", streaming=True)
     dw = DatasetWriter(args.output_dataset, args.output_dataset_json, args.begin, args.end)
-    dw.process(ds, process_module, args)
+    dw.process(ds, process_module_wrapper, args)
 
 
 @ray.remote

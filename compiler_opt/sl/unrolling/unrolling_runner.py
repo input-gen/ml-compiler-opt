@@ -86,7 +86,9 @@ def make_response_for_factor(factor: int):
     l = [0.5 for _ in range(ADVICE_TENSOR_LEN)]
     if factor == 0 or factor == 1:
         return l
+    assert(factor <= MAX_UNROLL_FACTOR)
     assert(factor >= UNROLL_FACTOR_OFFSET)
+    assert(factor - UNROLL_FACTOR_OFFSET < ADVICE_TENSOR_LEN)
     l[factor - UNROLL_FACTOR_OFFSET] = 2.0
     return l
 
@@ -379,6 +381,11 @@ class UnrollCompilerHost:
                     on_features(cur_decision, tensor_values)
 
                     heuristic = self.read_heuristic(fc)
+                    # TODO is this want we want to do??? Kind of unfair to the
+                    # unroll heuristic if we choose to evaluate using the
+                    # heuristic responses.
+                    if heuristic > MAX_UNROLL_FACTOR:
+                        heuristic = MAX_UNROLL_FACTOR
                     on_heuristic(cur_decision, heuristic)
 
                     send(tc, get_response(cur_decision, tensor_values, heuristic), advice_spec)

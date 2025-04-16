@@ -61,7 +61,7 @@ def process_module_wrapper(args, i, data):
 
 def process_module(data, dump_llvm, args):
 
-    inputs = [Input(**inpt) for inpt in data['inputs']]
+    inputs = [Input(**inpt) for inpt in data['inputs_normal_exit'] + data['inputs_abnormal_exit']]
 
     def to_dict(**kwargs):
         return kwargs
