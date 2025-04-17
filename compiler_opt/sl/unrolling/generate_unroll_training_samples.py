@@ -72,7 +72,7 @@ def process_module(data, dump_llvm, args):
     def to_dict(**kwargs):
         return kwargs
 
-    COMPILE_TIMEOUT = 1
+    COMPILE_TIMEOUT = 2
     replay_options = to_dict(
         working_dir=None,
         save_temps=args.save_temps,

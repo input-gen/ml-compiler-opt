@@ -88,7 +88,7 @@ def process_module(args, idx, data):
         instrumentationLogger.setLevel(logging.WARNING)
 
     try:
-        COMPILE_TIMEOUT = 1
+        COMPILE_TIMEOUT = 2
         INPUTGEN_TIMEOUT = 1
         NUM_INPUTS = 5
         # tuples of (int_min, int_max, num_inputs)
