@@ -63,6 +63,8 @@ class DatasetWriter:
         self.should_break = False
         self.should_break_immediately = False
 
+        self.i = 0
+
         signal.signal(signal.SIGUSR2, self.receive)
         signal.signal(signal.SIGUSR1, self.receive)
         signal.signal(signal.SIGINT, self.receive)
@@ -73,7 +75,7 @@ class DatasetWriter:
     def receive(self, signum, stack):
         if signum == signal.SIGUSR1:
             print(
-                f"Progress: module {self.i} size {self.total_pfile_size} pending {sorted(self.idxs_in_parquet)}"
+                f"Progress: module {self.i}"
             )
         elif signum == signal.SIGUSR2:
             print("Will break")
@@ -115,7 +117,9 @@ class DatasetWriter:
                     idx, data = next(ds)
                 except StopIteration:
                     break
+                self.i += 1
                 if idx not in self.already_processed:
+                    self.already_processed.add(idx)
                     worklist.append(process_fn.remote(process_fn_args, idx, data))
                 else:
                     logger.debug(f"Skipped {idx} because it was already processed.")
