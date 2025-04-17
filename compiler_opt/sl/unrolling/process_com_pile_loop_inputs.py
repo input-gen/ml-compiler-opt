@@ -47,9 +47,9 @@ def main(args):
     else:
         logging.basicConfig(level=logging.INFO)
 
-    ds = load_dataset(args.dataset, split='train', streaming=True)
+    dr = DatasetReader(args.dataset)
     dw = DatasetWriter(args.output_dataset, args.output_dataset_json, args.begin, parquet_size=PARQUET_SIZE)
-    dw.process(ds, process_module_wrapper, args)
+    dw.process(dr.get_iter(), process_module_wrapper, args)
 
 @ray.remote
 def process_module_wrapper(args, i, data):
