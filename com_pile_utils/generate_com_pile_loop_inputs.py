@@ -46,9 +46,6 @@ def parse_args_and_run():
 
     parser.add_argument("--dataset", required=True)
     parser.add_argument("--output-dataset", required=True)
-    parser.add_argument("--output-dataset-json", default=None)
-    parser.add_argument("--begin", default=0, type=int)
-    parser.add_argument("--end", default=None, type=int)
 
     parser.add_argument("--debug", default=False, action="store_true")
     parser.add_argument("--debug-instrumentation", default=False, action="store_true")
@@ -56,6 +53,11 @@ def parse_args_and_run():
     args = parser.parse_args()
     main(args)
 
+def iter_dataset(ds):
+    i = 0
+    for d in ds:
+        yield (i, d)
+        i += 1
 
 def main(args):
     if args.debug:
@@ -66,8 +68,8 @@ def main(args):
     # ray.init(log_to_driver=False)
 
     ds = load_dataset(args.dataset, split="train", streaming=True)
-    dw = DatasetWriter(args.output_dataset, args.output_dataset_json, args.begin, args.end)
-    dw.process(ds, process_module_wrapper, args)
+    dw = DatasetWriter(args.output_dataset)
+    dw.process(iter_dataset(ds), process_module_wrapper, args)
 
 
 @ray.remote
@@ -83,6 +85,7 @@ def process_module(args, idx, data):
         instrumentationLogger.setLevel(logging.WARNING)
 
     try:
+        COMPILE_TIMEOUT = 1
         INPUTGEN_TIMEOUT = 1
         NUM_INPUTS = 5
         # tuples of (int_min, int_max, num_inputs)
@@ -106,6 +109,7 @@ def process_module(args, idx, data):
             mclang=args.mclang,
             mllvm=args.mllvm,
             temp_dir=args.temp_dir,
+            compile_timeout=COMPILE_TIMEOUT,
         )
 
         igg = InputGenGenerate(

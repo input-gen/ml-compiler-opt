@@ -79,8 +79,9 @@ class InputGenTimeout(InputGenError):
 
 
 class InputGenUtils:
-    def __init__(self, working_dir=None, save_temps=False, mclang=None, mllvm=None, temp_dir=None):
+    def __init__(self, working_dir=None, save_temps=False, mclang=None, mllvm=None, temp_dir=None, compile_timeout=None):
         self.save_temps = save_temps
+        self.compile_timeout = compile_timeout
 
         if mclang is not None:
             self.mclang = mclang
@@ -106,6 +107,9 @@ class InputGenUtils:
             self.working_dir = self.temp_dir
 
         self.save_temps_counter = 0
+
+    def get_compile_timeout(self):
+        return self.compile_timeout
 
     def __del__(self):
         if self.temp_dir is not None and not self.save_temps:
@@ -175,7 +179,7 @@ class InputGenUtils:
 
     def get_executable_for_generation(self, mod, path):
         cmd = f"opt -O3 --input-gen-mode=generate".split(" ") + self.mllvm + self.get_entry_args()
-        instrumented_mod, _ = self.get_output(cmd, mod, ExecFailTy=InputGenInstrumentationError)
+        instrumented_mod, _ = self.get_output(cmd, mod, ExecFailTy=InputGenInstrumentationError, timeout=self.get_compile_timeout())
         self.save_temp(instrumented_mod, "instrumented_mod_for_generation.bc", binary=True)
         with tempfile.NamedTemporaryFile(dir=self.working_dir, suffix=".bc", delete=False) as f:
             f.write(instrumented_mod)
@@ -186,7 +190,7 @@ class InputGenUtils:
                 + [path]
                 + self.mclang
             )
-            exe, _ = self.get_output(cmd, instrumented_mod, ExecFailTy=InputGenInstrumentationError)
+            exe, _ = self.get_output(cmd, instrumented_mod, ExecFailTy=InputGenInstrumentationError, timeout=self.get_compile_timeout())
         self.save_temp(exe, "generation.exe", binary=True)
 
     def get_no_opt_replay_module(self, mod):
@@ -197,7 +201,7 @@ class InputGenUtils:
             + self.mllvm
             + self.get_entry_args()
         )
-        mod, _ = self.get_output(cmd, mod, ExecFailTy=InputGenInstrumentationError)
+        mod, _ = self.get_output(cmd, mod, ExecFailTy=InputGenInstrumentationError, timeout=self.get_compile_timeout())
         self.save_temp(mod, "instrumented_no_opt_replay_module.bc", binary=True)
         return mod
 
@@ -211,12 +215,12 @@ class InputGenUtils:
                 + [path]
                 + self.mclang
             )
-            exe, _ = self.get_output(cmd, mod, ExecFailTy=InputGenInstrumentationError)
+            exe, _ = self.get_output(cmd, mod, ExecFailTy=InputGenInstrumentationError, timeout=self.get_compile_timeout())
 
 
 class InputGenReplay(InputGenUtils):
     def __init__(
-        self, mod, working_dir=None, save_temps=False, mclang=None, mllvm=None, temp_dir=None
+            self, mod, working_dir=None, save_temps=False, mclang=None, mllvm=None, temp_dir=None, compile_timeout=None
     ):
         self.mod = mod
 
@@ -227,7 +231,7 @@ class InputGenReplay(InputGenUtils):
 
         self.inputs_written = 0
 
-        super().__init__(working_dir, save_temps, mclang, mllvm, temp_dir)
+        super().__init__(working_dir, save_temps, mclang, mllvm, temp_dir, compile_timeout)
 
         self.prepare()
 
@@ -246,7 +250,7 @@ class InputGenReplay(InputGenUtils):
         self.repl_exec = self.get_executable_for_replay_no_opt(self.mod, self.repl_exec_path)
 
         cmd = [self.repl_exec_path]
-        _, errs = self.get_output(cmd, allow_fail=True)
+        _, errs = self.get_output(cmd, allow_fail=True, timeout=self.get_compile_timeout())
         re_match = re.search("  Num available functions: ([0-9]+)", errs.decode("utf-8"))
 
         if re_match is None:
@@ -307,6 +311,7 @@ class InputGenGenerate(InputGenUtils):
         mllvm=None,
         entries="marked",
         temp_dir=None,
+            compile_timeout=None,
     ):
         self.mod = mod
         self.entries = entries
@@ -317,7 +322,7 @@ class InputGenGenerate(InputGenUtils):
         self.gen_exec = None
         self.repl_mod = None
 
-        super().__init__(working_dir, save_temps, mclang, mllvm, temp_dir)
+        super().__init__(working_dir, save_temps, mclang, mllvm, temp_dir, compile_timeout)
 
         self.prepare()
 
