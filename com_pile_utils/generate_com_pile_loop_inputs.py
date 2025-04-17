@@ -31,6 +31,7 @@ from input_gen.utils import (
     InputGenInstrumentationError,
 )
 from dataset_writer import DatasetWriter, ProcessResult
+from dataset_reader import DatasetReader
 
 logger = logging.getLogger(__name__)
 
@@ -54,13 +55,6 @@ def parse_args_and_run():
     main(args)
 
 
-def iter_dataset(ds):
-    i = 0
-    for d in ds:
-        yield (i, d)
-        i += 1
-
-
 def main(args):
     if args.debug:
         logging.basicConfig(level=logging.DEBUG)
@@ -69,9 +63,9 @@ def main(args):
 
     # ray.init(log_to_driver=False)
 
-    ds = load_dataset(args.dataset, split="train", streaming=True)
+    dr = DatasetReader(args.dataset)
     dw = DatasetWriter(args.output_dataset)
-    dw.process(iter_dataset(ds), process_module_wrapper, args)
+    dw.process(dr.get_iter(), process_module_wrapper, args)
 
 
 @ray.remote
