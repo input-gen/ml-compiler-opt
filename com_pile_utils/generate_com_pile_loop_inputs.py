@@ -163,26 +163,21 @@ def process_module(args, idx, data):
                 inpt["replay_time"] = res.timers["replay"]
                 inputs_normal_exit.append(inpt)
 
-        size = len(data["module"])
-
-        data["inputs_normal_exit"] = None
-        data["inputs_abnormal_exit"] = None
+        data["inputs_normal_exit"] = inputs_normal_exit
+        data["inputs_abnormal_exit"] = inputs_abnormal_exit
         data["inputs_normal_exit_generated_num"] = len(inputs_normal_exit)
         data["inputs_abnormal_exit_generated_num"] = len(inputs_abnormal_exit)
-        df = pandas.DataFrame(data, index=[0])
-        df.at[0, "inputs_normal_exit"] = inputs_normal_exit
-        df.at[0, "inputs_abnormal_exit"] = inputs_abnormal_exit
 
-        return ProcessResult(df, size, idx)
+        return ProcessResult(idx, [data])
 
     except InputGenInstrumentationError as e:
         instrumentationLogger.debug(f"Instrumentation error in module {idx}")
         instrumentationLogger.debug(e)
-        return None
+        return ProcessResult(idx, None)
     except InputGenError as e:
         logger.debug(f"InputGenGenerate failed in module {idx}")
         logger.debug(e)
-        return None
+        return ProcessResult(idx, None)
 
 
 if __name__ == "__main__":
