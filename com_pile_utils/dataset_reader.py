@@ -42,3 +42,11 @@ class DatasetReader:
             return iter_dataset(self.ds)
         else:
             raise Exception("unknown type")
+
+    def get_one_iter(self, one):
+        if self.ty == "sqlite3":
+            return iter_sqlite(self.cur.execute(f"SELECT rowid, data FROM data WHERE rowid=?", one))
+        elif self.ty == "ds":
+            return iter_dataset(self.ds.skip(one))
+        else:
+            raise Exception("unknown type")

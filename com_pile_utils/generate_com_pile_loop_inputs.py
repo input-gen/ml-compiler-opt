@@ -48,6 +48,8 @@ def parse_args_and_run():
     parser.add_argument("--dataset", required=True)
     parser.add_argument("--output-dataset", required=True)
 
+    parser.add_argument("--one", type=int, default=None)
+
     parser.add_argument("--debug", default=False, action="store_true")
     parser.add_argument("--debug-instrumentation", default=False, action="store_true")
 
@@ -64,8 +66,13 @@ def main(args):
     # ray.init(log_to_driver=False)
 
     dr = DatasetReader(args.dataset)
-    dw = DatasetWriter(args.output_dataset)
-    dw.process(dr.get_iter(), process_module_wrapper, args)
+    if args.one is None:
+        it = dr.get_iter()
+        dw = DatasetWriter(args.output_dataset)
+        dw.process(it, process_module_wrapper, args)
+    else:
+        it = dr.get_one_iter(args.one)
+        process_module(args, args.one, next(it)[1])
 
 
 @ray.remote
