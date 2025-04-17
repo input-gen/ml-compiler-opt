@@ -125,14 +125,14 @@ def process_module(args, idx, data):
                 seed = random.randint(0, 2147483647)
                 try:
                     inputs += igg.generate(
-                            entry_no=0,
-                            num_inputs=1,
-                            first_input=i,
-                            timeout=INPUTGEN_TIMEOUT,
-                            int_min=int_min,
-                            int_max=int_max,
-                            seed=seed,
-                        )
+                        entry_no=0,
+                        num_inputs=1,
+                        first_input=i,
+                        timeout=INPUTGEN_TIMEOUT,
+                        int_min=int_min,
+                        int_max=int_max,
+                        seed=seed,
+                    )
                 except InputGenError as e:
                     logger.debug(e)
         data["inputs"] = inputs

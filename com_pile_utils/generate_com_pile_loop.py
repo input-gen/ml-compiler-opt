@@ -108,7 +108,7 @@ def process_module_in_dir(module, language, idx, temp_outdir):
 
             size_estimate += len(loop_module)
 
-            dfs.append(pandas.DataFrame(data, index=[0]))
+            dfs.append(data)
 
         except OSError as e:
             logger.debug(e)
@@ -119,7 +119,7 @@ def process_module_in_dir(module, language, idx, temp_outdir):
     if len(dfs) == 0:
         return None
 
-    return ProcessResult(pandas.concat(dfs), size_estimate, idx)
+    return ProcessResult(idx, dfs)
 
 
 if __name__ == "__main__":
