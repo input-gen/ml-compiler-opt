@@ -13,6 +13,7 @@ from datasets import load_dataset
 
 from input_gen.utils import InputGenReplay, Input, InputGenError
 from com_pile_utils.dataset_writer import DatasetWriter, ProcessResult
+from com_pile_utils.dataset_reader import DatasetReader
 
 import unrolling_runner
 
@@ -24,8 +25,7 @@ def parse_args_and_run():
     )
     parser.add_argument('--dataset', required=True)
     parser.add_argument('--output-dataset', required=True)
-    parser.add_argument('--output-dataset-json', default=None)
-    parser.add_argument('--begin', default=0, type=int)
+
     parser.add_argument('--dump-llvm', default=False, action='store_true')
 
     parser.add_argument('--temp-dir', default=None)
@@ -48,16 +48,16 @@ def main(args):
         logging.basicConfig(level=logging.INFO)
 
     dr = DatasetReader(args.dataset)
-    dw = DatasetWriter(args.output_dataset, args.output_dataset_json, args.begin, parquet_size=PARQUET_SIZE)
+    dw = DatasetWriter(args.output_dataset)
     dw.process(dr.get_iter(), process_module_wrapper, args)
 
 @ray.remote
 def process_module_wrapper(args, i, data):
     res = process_module(data, args.dump_llvm, args)
     if res is None:
-        return None
+        return ProcessResult(i, None)
     else:
-        return ProcessResult(res, res.memory_usage(index=True).sum(), i)
+        return ProcessResult(i, res)
 
 def process_module(data, dump_llvm, args):
 

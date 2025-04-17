@@ -280,7 +280,8 @@ class UnrollCompilerHost:
 
         logger.debug(f"Launching compiler {' '.join(self.process_and_args)}")
         compiler_proc = subprocess.Popen(
-            self.process_and_args, stderr=None,
+            self.process_and_args,
+            stderr=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stdin=subprocess.PIPE
         )
@@ -447,7 +448,7 @@ def DUMP_MODULE(module, ident=''):
     with subprocess.Popen(
         dis_command_vector,
         stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
+        stderr=subprocess.DEVNULL,
         stdin=subprocess.PIPE) as dis_process:
         output = dis_process.communicate(
             input=module)[0].decode('utf-8')

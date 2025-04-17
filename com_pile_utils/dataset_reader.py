@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import sqlite3
+import pickle
 import os
 
 from datasets import load_dataset
@@ -11,6 +12,11 @@ def iter_dataset(ds):
     for d in ds:
         yield (i, d)
         i += 1
+
+
+def iter_sqlite(ds):
+    for i, d in ds:
+        yield (i, pickle.loads(d))
 
 
 class DatasetReader:
@@ -26,11 +32,12 @@ class DatasetReader:
             raise FileNotFoundError(path)
 
     def __del__(self):
-        self.con.close()
+        if self.ty == "sqlite3":
+            self.con.close()
 
     def get_iter(self):
         if self.ty == "sqlite3":
-            return self.cur.execute(f"SELECT rowid, data FROM data")
+            return iter_sqlite(self.cur.execute(f"SELECT rowid, data FROM data"))
         elif self.ty == "ds":
             return iter_dataset(self.ds)
         else:
