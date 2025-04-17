@@ -1,5 +1,13 @@
 # input-gen utilities
 
+## Python configuration
+Version 3.11.0
+``` shell
+./configure --prefix=/path/to/install/dir --enable-shared --enable-loadable-sqlite-extensions --enable-optimizations
+make -j
+make install
+```
+
 ## LLVM build configuration
 
 Baseline cmake configuration for the llvm installation:
@@ -8,7 +16,7 @@ Baseline cmake configuration for the llvm installation:
 cmake $LLVM_PROJECT_ROOT/llvm -DCMAKE_ENABLE_PROJECTS="clang;lld" -DCMAKE_ENABLE_RUNTIMES="compiler-rt" -DCOMPILER_RT_BUILD_INPUTGEN=ON"
 ```
 
-input-gen requires a C++20 standard library.
+input-gen requires a C++20 conformant standard library.
 
 ## Scripts
 
@@ -31,8 +39,7 @@ Multiple flags can also be specified as such:
 -mclang='--flag1' -mclang='--flag2' 
 ```
 
-Note that the scripts in this directory generally require python `3.12` or
-newer, while the rest of this repo requires python `3.11`.
+Note that this repo requires python `3.11`.
 
 ### Generating inputs for a module
 

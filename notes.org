@@ -21,7 +21,7 @@ cd ${TFLITE_PATH}
 - Needed to build this specific python python version with shared libs
 
 #+begin_src bash
-./configure --prefix=/scr/ivan/opt/python-3.11.0-shared --enable-shared
+./configure --prefix=/scr/ivan/opt/python-3.11.0-shared --enable-shared --enable-loadable-sqlite-extensions --enable-optimizations
 #+end_src
 
 
