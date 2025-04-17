@@ -463,7 +463,7 @@ def generate_samples(decision_results, inputs, replay_options):
 
         for inpt in inputs:
             num = 5
-            timeout=0.2
+            timeout=1
             for res in igm.replay_input(inpt.data, inpt.entry_no, num, timeout=timeout):
                 logger.debug(f'Res {res}')
                 re_match = re.search('MLGO_LOOP_UNROLL_TIMER ([0-9]+)', res.outs.decode('utf-8'))

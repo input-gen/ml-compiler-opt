@@ -61,17 +61,25 @@ def process_module_wrapper(args, i, data):
 
 def process_module(data, dump_llvm, args):
 
-    inputs = [Input(**inpt) for inpt in data['inputs_normal_exit'] + data['inputs_abnormal_exit']]
+    inputs = data['inputs']
+    if len(inputs) == 0:
+        logger.debug('No inputs')
+        return None
+    if all([r is None for r in data['replays']]):
+        logger.debug('No valid replays')
+        return None
 
     def to_dict(**kwargs):
         return kwargs
 
+    COMPILE_TIMEOUT = 1
     replay_options = to_dict(
         working_dir=None,
         save_temps=args.save_temps,
         mclang=args.mclang,
         mllvm=args.mllvm,
         temp_dir=args.temp_dir,
+        compile_timeout=COMPILE_TIMEOUT,
     )
 
     process_and_args = [
@@ -86,6 +94,7 @@ def process_module(data, dump_llvm, args):
 
             samples = list(unrolling_runner.generate_samples(decision_results, inputs, replay_options))
             if len(samples) == 0:
+                logger.debug('No samples generated')
                 return None
 
             features_spec = uch.get_features_spec()

@@ -7,11 +7,12 @@ from statistics import geometric_mean
 from datasets import load_dataset
 
 from unroll_model import ADVICE_TENSOR_LEN, UNROLL_FACTOR_OFFSET, MAX_UNROLL_FACTOR
+from com_pile_utils.dataset_reader import DatasetReader
 
 logger = logging.getLogger(__name__)
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--data', required=True)
+parser.add_argument('--dataset', required=True)
 parser.add_argument('--debug', default=False, action='store_true')
 args = parser.parse_args()
 
@@ -21,11 +22,16 @@ else:
     logging.basicConfig(level=logging.INFO)
 
 if True:
-    ds = load_dataset(args.data, split='train', streaming=True)
-    unroll_df = pd.DataFrame(ds)
+    dr = DatasetReader(args.dataset)
+    dfs = []
+    for i, d in dr.get_iter():
+        print(i, end='');
+        dfs.append(d)
+    print(dfs)
+    unroll_df = pd.concat(dfs)
     print(unroll_df)
 else:
-    unroll_df = pd.read_csv(args.data)
+    unroll_df = pd.read_csv(args.dataset)
 
 print(unroll_df.columns)
 

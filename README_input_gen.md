@@ -116,9 +116,10 @@ compiler_opt/sl/unrolling/rts/unrolling_profiler.o
 
 The following can be used to generate training samples
 ``` shell
-PYTHONPATH=$PYTHONPATH:. python3 compiler_opt/sl/unrolling/process_com_pile_loop_inputs.py --dataset ~/datasets/ComPileLoopInputs --output-dataset ~/datasets/UnrollTrainingSamples -mclang=compiler_opt/sl/unrolling/rts/unrolling_profiler.o  -mclang=-lpfm
-PYTHONPATH=$PYTHONPATH:. python3 compiler_opt/sl/unrolling/generate_unroll_training_samples.py --dataset path/to/ComPileLoopInputs -mclang=compiler_opt/sl/unrolling/rts/unrolling_profiler.o -mclang=-lpfm
+PYTHONPATH=$PYTHONPATH:. python3 compiler_opt/sl/unrolling/process_com_pile_loop_inputs.py --dataset path/to/ComPileLoopInputs  --output-dataset path/to//UnrollTrainingSamples -mclang=compiler_opt/sl/unrolling/rts/unrolling_profiler.o  -mclang=-lpfm
 ```
 
 Note the additional `-mclang` flag which links in the profiling runtime.
+
+### Training the unroll heuristic
 

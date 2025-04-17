@@ -114,6 +114,7 @@ def process_module(args, idx, data):
             **common_args,
         )
         assert igg.get_num_entries() == 1
+        data["module"] = igg.get_repl_mod()
 
         inputs = []
         for int_min, int_max, num_inputs in INPUTGEN_STRATEGY:
@@ -123,9 +124,7 @@ def process_module(args, idx, data):
                 # 0 to int32_t_max
                 seed = random.randint(0, 2147483647)
                 try:
-                    inputs += [
-                        dataclasses.asdict(i)
-                        for i in igg.generate(
+                    inputs += igg.generate(
                             entry_no=0,
                             num_inputs=1,
                             first_input=i,
@@ -134,39 +133,23 @@ def process_module(args, idx, data):
                             int_max=int_max,
                             seed=seed,
                         )
-                    ]
                 except InputGenError as e:
                     logger.debug(e)
-
-        data["module"] = igg.get_repl_mod()
-
-        logger.debug(data["module"])
+        data["inputs"] = inputs
 
         # TODO we want to gather some info on the inputs such as size, est. runtime,
-        # We should also probably run the generated inputs and make sure they
-        # run successfully.
         igr = InputGenReplay(
             data["module"],
             **common_args,
         )
 
-        logger.debug(inputs)
-        data["inputs_generated_num"] = len(inputs)
-
-        inputs_normal_exit = []
-        inputs_abnormal_exit = []
+        replays = []
         for inpt in inputs:
-            res = next(igr.replay_input(inpt["data"], entry_no=0, num=1, timeout=INPUTGEN_TIMEOUT))
-            if res is None or "replay" not in res.timers:
-                inputs_abnormal_exit.append(inpt)
-            else:
-                inpt["replay_time"] = res.timers["replay"]
-                inputs_normal_exit.append(inpt)
+            res = next(igr.replay_input(inpt.data, entry_no=0, num=1, timeout=INPUTGEN_TIMEOUT))
+            replays.append(res)
+        data["replays"] = replays
 
-        data["inputs_normal_exit"] = inputs_normal_exit
-        data["inputs_abnormal_exit"] = inputs_abnormal_exit
-        data["inputs_normal_exit_generated_num"] = len(inputs_normal_exit)
-        data["inputs_abnormal_exit_generated_num"] = len(inputs_abnormal_exit)
+        logger.debug(data)
 
         return ProcessResult(idx, [data])
 
