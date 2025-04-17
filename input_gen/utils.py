@@ -79,7 +79,15 @@ class InputGenTimeout(InputGenError):
 
 
 class InputGenUtils:
-    def __init__(self, working_dir=None, save_temps=False, mclang=None, mllvm=None, temp_dir=None, compile_timeout=None):
+    def __init__(
+        self,
+        working_dir=None,
+        save_temps=False,
+        mclang=None,
+        mllvm=None,
+        temp_dir=None,
+        compile_timeout=None,
+    ):
         self.save_temps = save_temps
         self.compile_timeout = compile_timeout
 
@@ -179,7 +187,9 @@ class InputGenUtils:
 
     def get_executable_for_generation(self, mod, path):
         cmd = f"opt -O3 --input-gen-mode=generate".split(" ") + self.mllvm + self.get_entry_args()
-        instrumented_mod, _ = self.get_output(cmd, mod, ExecFailTy=InputGenInstrumentationError, timeout=self.get_compile_timeout())
+        instrumented_mod, _ = self.get_output(
+            cmd, mod, ExecFailTy=InputGenInstrumentationError, timeout=self.get_compile_timeout()
+        )
         self.save_temp(instrumented_mod, "instrumented_mod_for_generation.bc", binary=True)
         with tempfile.NamedTemporaryFile(dir=self.working_dir, suffix=".bc", delete=False) as f:
             f.write(instrumented_mod)
@@ -190,7 +200,12 @@ class InputGenUtils:
                 + [path]
                 + self.mclang
             )
-            exe, _ = self.get_output(cmd, instrumented_mod, ExecFailTy=InputGenInstrumentationError, timeout=self.get_compile_timeout())
+            exe, _ = self.get_output(
+                cmd,
+                instrumented_mod,
+                ExecFailTy=InputGenInstrumentationError,
+                timeout=self.get_compile_timeout(),
+            )
         self.save_temp(exe, "generation.exe", binary=True)
 
     def get_no_opt_replay_module(self, mod):
@@ -201,7 +216,9 @@ class InputGenUtils:
             + self.mllvm
             + self.get_entry_args()
         )
-        mod, _ = self.get_output(cmd, mod, ExecFailTy=InputGenInstrumentationError, timeout=self.get_compile_timeout())
+        mod, _ = self.get_output(
+            cmd, mod, ExecFailTy=InputGenInstrumentationError, timeout=self.get_compile_timeout()
+        )
         self.save_temp(mod, "instrumented_no_opt_replay_module.bc", binary=True)
         return mod
 
@@ -215,12 +232,21 @@ class InputGenUtils:
                 + [path]
                 + self.mclang
             )
-            exe, _ = self.get_output(cmd, mod, ExecFailTy=InputGenInstrumentationError, timeout=self.get_compile_timeout())
+            exe, _ = self.get_output(
+                cmd, mod, ExecFailTy=InputGenInstrumentationError, timeout=self.get_compile_timeout()
+            )
 
 
 class InputGenReplay(InputGenUtils):
     def __init__(
-            self, mod, working_dir=None, save_temps=False, mclang=None, mllvm=None, temp_dir=None, compile_timeout=None
+        self,
+        mod,
+        working_dir=None,
+        save_temps=False,
+        mclang=None,
+        mllvm=None,
+        temp_dir=None,
+        compile_timeout=None,
     ):
         self.mod = mod
 
@@ -311,7 +337,7 @@ class InputGenGenerate(InputGenUtils):
         mllvm=None,
         entries="marked",
         temp_dir=None,
-            compile_timeout=None,
+        compile_timeout=None,
     ):
         self.mod = mod
         self.entries = entries

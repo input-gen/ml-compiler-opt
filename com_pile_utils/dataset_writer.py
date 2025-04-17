@@ -74,9 +74,7 @@ class DatasetWriter:
 
     def receive(self, signum, stack):
         if signum == signal.SIGUSR1:
-            print(
-                f"Progress: module {self.i}"
-            )
+            print(f"Progress: module {self.i}")
         elif signum == signal.SIGUSR2:
             print("Will break")
             self.should_break = True

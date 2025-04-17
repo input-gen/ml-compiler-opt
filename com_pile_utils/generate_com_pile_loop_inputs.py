@@ -53,11 +53,13 @@ def parse_args_and_run():
     args = parser.parse_args()
     main(args)
 
+
 def iter_dataset(ds):
     i = 0
     for d in ds:
         yield (i, d)
         i += 1
+
 
 def main(args):
     if args.debug:
