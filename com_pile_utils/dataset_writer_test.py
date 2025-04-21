@@ -23,9 +23,9 @@ class DatasetWriterTest(unittest.TestCase):
 
             data = list(enumerate([None, ["d"], None, ["a", "b"], []]))
             ds = iter(data)
-            dw = DatasetWriter(dbname)
-            self.assertEqual(dw.already_processed, set())
-            dw.process(ds, process_module_wrapper, None)
+            with DatasetWriter(dbname) as dw:
+                self.assertEqual(dw.already_processed, set())
+                dw.process(ds, process_module_wrapper, None)
 
             con = sqlite3.connect(dbname)
             cur = con.cursor()
@@ -37,9 +37,9 @@ class DatasetWriterTest(unittest.TestCase):
 
             data = list(enumerate([None, ["dssssssssssss"], ["c"], ["aaaaaaaaaa"], []]))
             ds = iter(data)
-            dw = DatasetWriter(dbname)
-            self.assertEqual(dw.already_processed, set(range(5)))
-            dw.process(ds, process_module_wrapper, None)
+            with DatasetWriter(dbname) as dw:
+                self.assertEqual(dw.already_processed, set(range(5)))
+                dw.process(ds, process_module_wrapper, None)
 
             con = sqlite3.connect(dbname)
             cur = con.cursor()
@@ -51,9 +51,9 @@ class DatasetWriterTest(unittest.TestCase):
 
             data = [(10, ["e"])]
             ds = iter(data)
-            dw = DatasetWriter(dbname)
-            self.assertEqual(dw.already_processed, set(range(5)))
-            dw.process(ds, process_module_wrapper, None)
+            with DatasetWriter(dbname) as dw:
+                self.assertEqual(dw.already_processed, set(range(5)))
+                dw.process(ds, process_module_wrapper, None)
 
             con = sqlite3.connect(dbname)
             cur = con.cursor()
@@ -63,8 +63,8 @@ class DatasetWriterTest(unittest.TestCase):
             self.assertEqual(set(d), dumps({(3, "a"), (3, "b"), (1, "d"), (10, "e")}))
             con.close()
 
-            dw = DatasetWriter(dbname)
-            self.assertEqual(dw.already_processed, set(range(5)).union({10}))
+            with DatasetWriter(dbname) as dw:
+                self.assertEqual(dw.already_processed, set(range(5)).union({10}))
 
 
 @ray.remote

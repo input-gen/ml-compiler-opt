@@ -63,16 +63,13 @@ def main(args):
     else:
         logging.basicConfig(level=logging.INFO)
 
-    # ray.init(log_to_driver=False)
-
-    dr = DatasetReader(args.dataset)
-    if args.one is None:
-        it = dr.get_iter()
-        dw = DatasetWriter(args.output_dataset)
-        dw.process(it, process_module_wrapper, args)
-    else:
-        it = dr.get_one_iter(args.one)
-        process_module(args, args.one, next(it)[1])
+    with DatasetReader(args.dataset) as dr:
+        if args.one is None:
+            with DatasetWriter(args.output_dataset) as dw:
+                dw.process(dr.get_iter(), process_module_wrapper, args)
+        else:
+            it = dr.get_one_iter(args.one)
+            process_module(args, args.one, next(it)[1])
 
 
 @ray.remote

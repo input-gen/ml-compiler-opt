@@ -48,9 +48,9 @@ def main(args):
     else:
         logging.basicConfig(level=logging.INFO)
 
-    dr = DatasetReader(args.dataset)
-    dw = DatasetWriter(args.output_dataset)
-    dw.process(dr.get_iter(), process_module_wrapper, args)
+    with DatasetReader(args.dataset) as dr:
+        with DatasetWriter(args.output_dataset) as dw:
+            dw.process(dr.get_iter(), process_module_wrapper, args)
 
 
 @ray.remote

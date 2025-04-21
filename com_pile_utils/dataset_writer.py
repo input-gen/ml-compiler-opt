@@ -69,7 +69,10 @@ class DatasetWriter:
         signal.signal(signal.SIGUSR1, self.receive)
         signal.signal(signal.SIGINT, self.receive)
 
-    def __del__(self):
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
         self.con.close()
 
     def receive(self, signum, stack):

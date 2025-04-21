@@ -19,34 +19,49 @@ def iter_sqlite(ds):
         yield (i, pickle.loads(d))
 
 
-class DatasetReader:
+class SqliteDatasetReader:
     def __init__(self, path):
-        if os.path.isfile(path):
-            self.ty = "sqlite3"
-            self.con = sqlite3.connect(path)
-            self.cur = self.con.cursor()
-        elif os.path.isdir(path):
-            self.ty = "ds"
-            self.ds = load_dataset(path, split="train", streaming=True)
-        else:
-            raise FileNotFoundError(path)
+        self.ty = "sqlite3"
+        self.con = sqlite3.connect(path)
+        self.cur = self.con.cursor()
 
-    def __del__(self):
-        if self.ty == "sqlite3":
-            self.con.close()
+    def cleanup(self):
+        self.con.close()
 
     def get_iter(self):
-        if self.ty == "sqlite3":
-            return iter_sqlite(self.cur.execute(f"SELECT rowid, data FROM data"))
-        elif self.ty == "ds":
-            return iter_dataset(self.ds)
-        else:
-            raise Exception("unknown type")
+        return iter_sqlite(self.cur.execute(f"SELECT rowid, data FROM data"))
 
     def get_one_iter(self, one):
-        if self.ty == "sqlite3":
-            return iter_sqlite(self.cur.execute(f"SELECT rowid, data FROM data WHERE rowid=?", one))
-        elif self.ty == "ds":
-            return iter_dataset(self.ds.skip(one))
+        return iter_sqlite(self.cur.execute(f"SELECT rowid, data FROM data WHERE rowid=?", one))
+
+
+class DatasetsDatasetReader:
+    def __init__(self, path):
+        self.ty = "ds"
+        self.ds = load_dataset(path, split="train", streaming=True)
+
+    def cleanup(self): ...
+
+    def get_iter(self):
+        return iter_dataset(self.ds)
+
+    def get_one_iter(self, one):
+        return iter_dataset(self.ds.skip(one))
+
+
+class DatasetReader:
+    def __init__(self, path):
+        self.path = path
+
+    def __enter__(self):
+        self.impl = None
+        if os.path.isfile(self.path):
+            self.impl = SqliteDatasetReader(self.path)
+        elif os.path.isdir(self.path):
+            self.impl = DatasetsDatasetReader(self.path)
         else:
-            raise Exception("unknown type")
+            raise FileNotFoundError(self.path)
+        return self.impl
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.impl.cleanup()
