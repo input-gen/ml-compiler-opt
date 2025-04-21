@@ -74,9 +74,8 @@ class GenCompileLoopInputsTest(unittest.TestCase):
         self.assertEqual(loop_inputs.i, 13)
         logger.debug(loop_inputs.data)
         logger.debug(loop_inputs.data[0])
-        logger.debug(loop_inputs.data[0]["inputs_normal_exit"])
-        self.assertGreater(len(loop_inputs.data[0]["inputs_normal_exit"]), 0)
-        self.assertEqual(len(loop_inputs.data[0]["inputs_abnormal_exit"]), 0)
+        logger.debug(loop_inputs.data[0]["inputs"])
+        self.assertGreater(len(loop_inputs.data[0]["inputs"]), 0)
 
 
 if __name__ == "__main__":

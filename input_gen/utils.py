@@ -100,9 +100,14 @@ class InputGenUtils:
         else:
             self.mllvm = []
 
-        if working_dir is not None:
+        self.save_temps_counter = 0
+
+        self.working_dir = working_dir
+        self.temp_dir_arg = temp_dir
+
+    def prepare_utils(self):
+        if self.working_dir is not None:
             self.temp_dir = None
-            self.working_dir = working_dir
         else:
             # FIXME the delete= kw is not valid in python <=3.11 so we cant use
             # it. on the other hand the ml-compiler-opt infra does not support
@@ -111,10 +116,8 @@ class InputGenUtils:
             # self.temp_dir = tempfile.TemporaryDirectory(dir=temp_dir, delete=(not save_temps))
             # self.working_dir = self.temp_dir.name
 
-            self.temp_dir = tempfile.mkdtemp(dir=temp_dir)
+            self.temp_dir = tempfile.mkdtemp(dir=self.temp_dir_arg)
             self.working_dir = self.temp_dir
-
-        self.save_temps_counter = 0
 
     def get_compile_timeout(self):
         return self.compile_timeout
@@ -259,12 +262,14 @@ class InputGenReplay(InputGenUtils):
 
         self.inputs_written = 0
 
-    def __enter__(self):
         super().__init__(working_dir, save_temps, mclang, mllvm, temp_dir, compile_timeout)
+
+    def __enter__(self):
+        self.prepare_utils()
         self.prepare()
         return self
 
-    def __exit__(self):
+    def __exit__(self, exc_type, exc_val, exc_tb):
         self.cleanup()
 
     def check_prep_done(self):
@@ -354,12 +359,14 @@ class InputGenGenerate(InputGenUtils):
         self.gen_exec = None
         self.repl_mod = None
 
-    def __enter__(self):
         super().__init__(working_dir, save_temps, mclang, mllvm, temp_dir, compile_timeout)
+
+    def __enter__(self):
+        self.prepare_utils()
         self.prepare()
         return self
 
-    def __exit__(self):
+    def __exit__(self, exc_type, exc_val, exc_tb):
         self.cleanup()
 
     def prepare(self):
