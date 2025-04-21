@@ -98,12 +98,17 @@ class DatasetWriter:
         logger.debug(f"Already processed {self.already_processed}")
 
     def add_failure(self, idx):
-        self.cur.execute(f"INSERT INTO {PROCESSED_TABLE} VALUES(?, ?)", (idx, False))
+        self.cur.execute(
+            f"INSERT INTO {PROCESSED_TABLE} ({ID_FIELD}, {SUCCESS_FIELD}) VALUES(?, ?)", (idx, False)
+        )
 
     def add_success(self, idx, df):
-        self.cur.execute(f"INSERT INTO {PROCESSED_TABLE} VALUES(?, ?)", (idx, True))
+        self.cur.execute(
+            f"INSERT INTO {PROCESSED_TABLE} ({ID_FIELD}, {SUCCESS_FIELD}) VALUES(?, ?)", (idx, True)
+        )
         self.cur.executemany(
-            f"INSERT INTO {DATA_TABLE} VALUES(?, ?)", [(idx, pickle.dumps(d)) for d in df]
+            f"INSERT INTO {DATA_TABLE} ({ID_FIELD}, {DATA_FIELD}) VALUES(?, ?)",
+            [(idx, pickle.dumps(d)) for d in df],
         )
 
     def process(self, ds, process_fn, process_fn_args):
