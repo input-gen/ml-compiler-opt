@@ -19,27 +19,28 @@ import unrolling_runner
 
 logger = logging.getLogger(__name__)
 
+
 def parse_args_and_run():
-    parser = argparse.ArgumentParser(
-        description='Reading ComPileLoop'
-    )
-    parser.add_argument('--dataset', required=True)
-    parser.add_argument('--output-dataset', required=True)
+    parser = argparse.ArgumentParser(description="Reading ComPileLoop")
+    parser.add_argument("--dataset", required=True)
+    parser.add_argument("--output-dataset", required=True)
 
-    parser.add_argument('--dump-llvm', default=False, action='store_true')
+    parser.add_argument("--dump-llvm", default=False, action="store_true")
 
-    parser.add_argument('--temp-dir', default=None)
-    parser.add_argument('--save-temps', action='store_true', default=False)
-    parser.add_argument('-mclang', default=[], action='append')
-    parser.add_argument('-mllvm', default=[], action='append')
+    parser.add_argument("--temp-dir", default=None)
+    parser.add_argument("--save-temps", action="store_true", default=False)
+    parser.add_argument("-mclang", default=[], action="append")
+    parser.add_argument("-mllvm", default=[], action="append")
 
-    parser.add_argument('--debug', default=False, action='store_true')
+    parser.add_argument("--debug", default=False, action="store_true")
 
     args = parser.parse_args()
     main(args)
 
+
 # 10MB
 PARQUET_SIZE = 10 * 1000 * 1000
+
 
 def main(args):
     if args.debug:
@@ -51,6 +52,7 @@ def main(args):
     dw = DatasetWriter(args.output_dataset)
     dw.process(dr.get_iter(), process_module_wrapper, args)
 
+
 @ray.remote
 def process_module_wrapper(args, i, data):
     res = process_module(data, args.dump_llvm, args)
@@ -59,14 +61,14 @@ def process_module_wrapper(args, i, data):
     else:
         return ProcessResult(i, res)
 
-def process_module(data, dump_llvm, args):
 
-    inputs = data['inputs']
+def process_module(data, dump_llvm, args):
+    inputs = data["inputs"]
     if len(inputs) == 0:
-        logger.debug('No inputs')
+        logger.debug("No inputs")
         return None
-    if all([r is None for r in data['replays']]):
-        logger.debug('No valid replays')
+    if all([r is None for r in data["replays"]]):
+        logger.debug("No valid replays")
         return None
 
     def to_dict(**kwargs):
@@ -83,18 +85,21 @@ def process_module(data, dump_llvm, args):
     )
 
     process_and_args = [
-        'opt', '-O3',
+        "opt",
+        "-O3",
     ]
 
     with tempfile.TemporaryDirectory() as tmpdir:
         try:
             uch = unrolling_runner.UnrollCompilerHost(False, args.debug)
 
-            decision_results = uch.get_unroll_decision_results(data['module'], process_and_args, tmpdir)
+            decision_results = uch.get_unroll_decision_results(
+                data["module"], process_and_args, tmpdir
+            )
 
             samples = list(unrolling_runner.generate_samples(decision_results, inputs, replay_options))
             if len(samples) == 0:
-                logger.debug('No samples generated')
+                logger.debug("No samples generated")
                 return None
 
             features_spec = uch.get_features_spec()
@@ -104,7 +109,7 @@ def process_module(data, dump_llvm, args):
             for features, advice in samples:
                 flattened_features = []
                 for feature in features:
-                    assert(len(feature) == 1)
+                    assert len(feature) == 1
                     flattened_features.append(feature[0])
                 flattened_samples.append(flattened_features + advice)
 
@@ -114,13 +119,14 @@ def process_module(data, dump_llvm, args):
             labels += [advice_spec.name + str(i + 2) for i in range(advice_spec.shape[0])]
 
             df = pandas.DataFrame(flattened_samples, columns=labels)
-            logger.debug('Intermediate df')
+            logger.debug("Intermediate df")
             logger.debug(df)
-            return df
+            return [df]
 
         except InputGenError as e:
-            logger.debug(f'InputGenGenerate failed: {e}')
+            logger.debug(f"InputGenGenerate failed: {e}")
             return None
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     parse_args_and_run()
