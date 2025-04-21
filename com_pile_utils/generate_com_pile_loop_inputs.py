@@ -112,45 +112,44 @@ def process_module(args, idx, data):
             compile_timeout=COMPILE_TIMEOUT,
         )
 
-        igg = InputGenGenerate(
+        with InputGenGenerate(
             data["module"],
             entries=["__llvm_extracted_loop"],
             **common_args,
-        )
-        assert igg.get_num_entries() == 1
-        data["module"] = igg.get_repl_mod()
+        ) as igg:
+            assert igg.get_num_entries() == 1
+            data["module"] = igg.get_repl_mod()
 
-        inputs = []
-        for int_min, int_max, num_inputs in INPUTGEN_STRATEGY:
-            # We do a separate igg.generate for each single input because we
-            # want different seeds for each one.
-            for i in range(num_inputs):
-                # 0 to int32_t_max
-                seed = random.randint(0, 2147483647)
-                try:
-                    inputs += igg.generate(
-                        entry_no=0,
-                        num_inputs=1,
-                        first_input=i,
-                        timeout=INPUTGEN_TIMEOUT,
-                        int_min=int_min,
-                        int_max=int_max,
-                        seed=seed,
-                    )
-                except InputGenError as e:
-                    logger.debug(e)
-        data["inputs"] = inputs
+            inputs = []
+            for int_min, int_max, num_inputs in INPUTGEN_STRATEGY:
+                # We do a separate igg.generate for each single input because we
+                # want different seeds for each one.
+                for i in range(num_inputs):
+                    # 0 to int32_t_max
+                    seed = random.randint(0, 2147483647)
+                    try:
+                        inputs += igg.generate(
+                            entry_no=0,
+                            num_inputs=1,
+                            first_input=i,
+                            timeout=INPUTGEN_TIMEOUT,
+                            int_min=int_min,
+                            int_max=int_max,
+                            seed=seed,
+                        )
+                    except InputGenError as e:
+                        logger.debug(e)
+            data["inputs"] = inputs
 
         # TODO we want to gather some info on the inputs such as size, est. runtime,
-        igr = InputGenReplay(
+        with InputGenReplay(
             data["module"],
             **common_args,
-        )
-
-        replays = []
-        for inpt in inputs:
-            res = next(igr.replay_input(inpt.data, entry_no=0, num=1, timeout=INPUTGEN_TIMEOUT))
-            replays.append(res)
+        ) as igr:
+            replays = []
+            for inpt in inputs:
+                res = next(igr.replay_input(inpt.data, entry_no=0, num=1, timeout=INPUTGEN_TIMEOUT))
+                replays.append(res)
         data["replays"] = replays
 
         logger.debug(data)

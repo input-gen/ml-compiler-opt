@@ -11,7 +11,7 @@ import ray
 import dataclasses
 from datasets import load_dataset
 
-from input_gen.utils import InputGenReplay, Input, InputGenError
+from input_gen.utils import Input, InputGenError
 from com_pile_utils.dataset_writer import DatasetWriter, ProcessResult
 from com_pile_utils.dataset_reader import DatasetReader
 

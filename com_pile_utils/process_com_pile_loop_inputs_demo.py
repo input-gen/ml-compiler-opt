@@ -45,20 +45,19 @@ def main(args):
 
 def process_module(data, l, dump_llvm, args):
     l.append(data["loop_trip_count"])
-    igm = InputGenReplay(
+    with InputGenReplay(
         data["module"],
         working_dir=None,
         save_temps=args.save_temps,
         mclang=args.mclang,
         mllvm=args.mllvm,
         temp_dir=args.temp_dir,
-    )
-
-    for inpt in data["inputs"]:
-        inpt = Input(**inpt)
-        num = 2
-        print(f"Replayed {num} times")
-        print(list(igm.replay_input(inpt.data, inpt.entry_no, num)))
+    ) as igr:
+        for inpt in data["inputs"]:
+            inpt = Input(**inpt)
+            num = 2
+            print(f"Replayed {num} times")
+            print(list(igr.replay_input(inpt.data, inpt.entry_no, num)))
 
     if dump_llvm:
         bitcode_module = data["module"]

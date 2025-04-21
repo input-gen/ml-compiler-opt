@@ -10,14 +10,6 @@ from argparse import Namespace
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG)
 
-from input_gen.utils import (
-    InputGenReplay,
-    InputGenGenerate,
-    Input,
-    InputGenError,
-    InputGenInstrumentationError,
-)
-
 TEST_MODULE = b"""
 define dso_local void @_Z8vec_initPdi(ptr noundef captures(none) %a, i32 noundef %n) local_unnamed_addr #0 {
 entry0:

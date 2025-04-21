@@ -119,7 +119,7 @@ class InputGenUtils:
     def get_compile_timeout(self):
         return self.compile_timeout
 
-    def __del__(self):
+    def cleanup(self):
         if self.temp_dir is not None and not self.save_temps:
             shutil.rmtree(self.temp_dir)
 
@@ -186,7 +186,7 @@ class InputGenUtils:
         return cmd
 
     def get_executable_for_generation(self, mod, path):
-        cmd = f"opt -O3 --input-gen-mode=generate".split(" ") + self.mllvm + self.get_entry_args()
+        cmd = ["opt", "-O3", "--input-gen-mode=generate"] + self.mllvm + self.get_entry_args()
         instrumented_mod, _ = self.get_output(
             cmd, mod, ExecFailTy=InputGenInstrumentationError, timeout=self.get_compile_timeout()
         )
@@ -194,12 +194,17 @@ class InputGenUtils:
         with tempfile.NamedTemporaryFile(dir=self.working_dir, suffix=".bc", delete=False) as f:
             f.write(instrumented_mod)
             f.flush()
-            cmd = (
-                ["clang++", f.name]
-                + "-linputgen.generate -lpthread -fuse-ld=lld -O3 -flto -o".split(" ")
-                + [path]
-                + self.mclang
-            )
+            cmd = [
+                "clang++",
+                f.name,
+                "-linputgen.generate",
+                "-lpthread",
+                "-fuse-ld=lld",
+                "-O3",
+                "-flto",
+                "-o",
+                path,
+            ] + self.mclang
             exe, _ = self.get_output(
                 cmd,
                 instrumented_mod,
@@ -210,9 +215,11 @@ class InputGenUtils:
 
     def get_no_opt_replay_module(self, mod):
         cmd = (
-            f"opt -passes=input-gen-instrument-entries,input-gen-instrument-memory --input-gen-mode=replay_generated".split(
-                " "
-            )
+            [
+                "opt",
+                "-passes=input-gen-instrument-entries,input-gen-instrument-memory",
+                "--input-gen-mode=replay_generated",
+            ]
             + self.mllvm
             + self.get_entry_args()
         )
@@ -226,12 +233,7 @@ class InputGenUtils:
         with tempfile.NamedTemporaryFile(dir=self.working_dir, suffix=".bc", delete=False) as f:
             f.write(mod)
             f.flush()
-            cmd = (
-                ["clang++", f.name]
-                + "-linputgen.replay -lpthread -o".split(" ")
-                + [path]
-                + self.mclang
-            )
+            cmd = ["clang++", f.name, "-linputgen.replay", "-lpthread", "-o", path] + self.mclang
             exe, _ = self.get_output(
                 cmd, mod, ExecFailTy=InputGenInstrumentationError, timeout=self.get_compile_timeout()
             )
@@ -257,9 +259,13 @@ class InputGenReplay(InputGenUtils):
 
         self.inputs_written = 0
 
+    def __enter__(self):
         super().__init__(working_dir, save_temps, mclang, mllvm, temp_dir, compile_timeout)
-
         self.prepare()
+        return self
+
+    def __exit__(self):
+        self.cleanup()
 
     def check_prep_done(self):
         if not self.preparation_done:
@@ -348,9 +354,13 @@ class InputGenGenerate(InputGenUtils):
         self.gen_exec = None
         self.repl_mod = None
 
+    def __enter__(self):
         super().__init__(working_dir, save_temps, mclang, mllvm, temp_dir, compile_timeout)
-
         self.prepare()
+        return self
+
+    def __exit__(self):
+        self.cleanup()
 
     def prepare(self):
         self.save_temp(self.mod, "original_module", binary=True)
@@ -555,23 +565,22 @@ def main(args):
         mod = f.read()
 
     # Generate inputs
-    igg = InputGenGenerate(
+    with InputGenGenerate(
         mod, args.temp_dir, args.save_temps, args.mclang, args.mllvm, mode, args.temp_dir
-    )
-    inputs = igg.generate()
+    ) as igg:
+        inputs = igg.generate()
 
     # Get generated inputs and module for replay
     replay_module = igg.get_repl_mod()
 
-    igr = InputGenReplay(
+    with InputGenReplay(
         replay_module, args.temp_dir, args.save_temps, args.mclang, args.mllvm, args.temp_dir
-    )
-
-    for inpt in inputs:
-        num = 5
-        timeout = 0.2
-        for res in igr.replay_input(inpt.data, inpt.entry_no, num, timeout=timeout):
-            logger.info(f"Res {res}")
+    ) as igr:
+        for inpt in inputs:
+            num = 5
+            timeout = 0.2
+            for res in igr.replay_input(inpt.data, inpt.entry_no, num, timeout=timeout):
+                logger.info(f"Res {res}")
 
 
 if __name__ == "__main__":

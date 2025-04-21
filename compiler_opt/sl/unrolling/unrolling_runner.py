@@ -453,21 +453,20 @@ def DUMP_MODULE(module, ident=""):
 
 def generate_samples(decision_results, inputs, replay_options):
     def get_module_runtimes(module):
-        igm = InputGenReplay(module, **replay_options)
-
-        for inpt in inputs:
-            num = 5
-            timeout = 1
-            for res in igm.replay_input(inpt.data, inpt.entry_no, num, timeout=timeout):
-                logger.debug(f"Res {res}")
-                re_match = re.search("MLGO_LOOP_UNROLL_TIMER ([0-9]+)", res.outs.decode("utf-8"))
-                if re_match is None:
-                    logger.debug(f"No match")
-                    yield None
-                else:
-                    f = int(re_match.group(1))
-                    logger.debug(f"Match {f}")
-                    yield f
+        with InputGenReplay(module, **replay_options) as igr:
+            for inpt in inputs:
+                num = 5
+                timeout = 1
+                for res in igr.replay_input(inpt.data, inpt.entry_no, num, timeout=timeout):
+                    logger.debug(f"Res {res}")
+                    re_match = re.search("MLGO_LOOP_UNROLL_TIMER ([0-9]+)", res.outs.decode("utf-8"))
+                    if re_match is None:
+                        logger.debug(f"No match")
+                        yield None
+                    else:
+                        f = int(re_match.group(1))
+                        logger.debug(f"Match {f}")
+                        yield f
 
     def get_udr_runtime(udr: UnrollDecisionResult):
         if udr.action or udr.factor == 1:
