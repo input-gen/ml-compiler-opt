@@ -12,8 +12,8 @@ from com_pile_utils.dataset_reader import DatasetReader
 logger = logging.getLogger(__name__)
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--dataset', required=True)
-parser.add_argument('--debug', default=False, action='store_true')
+parser.add_argument("--dataset", required=True)
+parser.add_argument("--debug", default=False, action="store_true")
 args = parser.parse_args()
 
 if args.debug:
@@ -25,10 +25,10 @@ if True:
     dr = DatasetReader(args.dataset)
     dfs = []
     for i, d in dr.get_iter():
-        print(i, end='');
+        # print(f"id {i} len {len(d)}")
         dfs.append(d)
-    print(dfs)
     unroll_df = pd.concat(dfs)
+    unroll_df = unroll_df.reset_index(drop=True)
     print(unroll_df)
 else:
     unroll_df = pd.read_csv(args.dataset)
@@ -37,7 +37,7 @@ print(unroll_df.columns)
 
 cols = list(unroll_df.columns)
 for i, col in enumerate(cols):
-    if 'unrolling_decision' in col:
+    if "unrolling_decision" in col:
         break
 unroll_features = unroll_df[cols[:i]]
 unroll_labels = unroll_df[cols[i:]]
@@ -47,40 +47,37 @@ print(unroll_labels.columns)
 assert len(unroll_labels.columns) == ADVICE_TENSOR_LEN
 
 
-split = len(unroll_features.index) / 2
+split = len(unroll_features.index) // 2
 
 print(len(unroll_labels.index))
 
-test_unroll_features = unroll_features.loc[split:]
-test_unroll_labels = unroll_labels.loc[split:]
+test_unroll_features = unroll_features.iloc[split:]
+test_unroll_labels = unroll_labels.iloc[split:]
 print(len(test_unroll_labels.index))
 
-train_unroll_features = unroll_features.loc[:split]
-train_unroll_labels = unroll_labels.loc[:split]
+train_unroll_features = unroll_features.iloc[:split]
+train_unroll_labels = unroll_labels.iloc[:split]
 print(len(train_unroll_labels.index))
 
 
-model = tf.keras.models.Sequential([
-  tf.keras.layers.Dense(128),
-  tf.keras.layers.Dense(128),
-  tf.keras.layers.Dense(ADVICE_TENSOR_LEN)
-])
+model = tf.keras.models.Sequential(
+    [tf.keras.layers.Dense(128), tf.keras.layers.Dense(128), tf.keras.layers.Dense(ADVICE_TENSOR_LEN)]
+)
 
 model.compile(
     loss=tf.keras.losses.MeanSquaredError(),
     optimizer=tf.keras.optimizers.Adam(),
-    metrics=[
-        tf.keras.metrics.TopKCategoricalAccuracy(i, name='top' + str(i)) for i in range(1, 6)
-    ],
+    metrics=[tf.keras.metrics.TopKCategoricalAccuracy(i, name="top" + str(i)) for i in range(1, 6)],
 )
 model.fit(train_unroll_features, train_unroll_labels, epochs=10)
+
 
 def eval_speedup(model, features, labels):
     oracle_speedups = []
     predicted_speedups = []
     for predicted, (row_idx, real) in zip(model.predict(features), labels.iterrows()):
-        logger.debug(f'predicted: {predicted}')
-        logger.debug(f'real: {real}')
+        logger.debug(f"predicted: {predicted}")
+        logger.debug(f"real: {real}")
 
         oracle_speedup = max(1, real.max())
 
@@ -103,7 +100,8 @@ def eval_speedup(model, features, labels):
 
     logger.debug(oracle_speedups)
     logger.debug(predicted_speedups)
-    logger.info(f'Geomean oracle speedup: {geometric_mean(oracle_speedups)}')
-    logger.info(f'Geomean predicted speedup: {geometric_mean(predicted_speedups)}')
+    logger.info(f"Geomean oracle speedup: {geometric_mean(oracle_speedups)}")
+    logger.info(f"Geomean predicted speedup: {geometric_mean(predicted_speedups)}")
+
 
 eval_speedup(model, test_unroll_features, test_unroll_labels)
