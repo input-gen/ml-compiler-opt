@@ -57,7 +57,7 @@ SUCCESS_FIELD = "success"
 class DatasetWriter:
     def __init__(self, output_dataset):
         self.output_dataset = output_dataset
-        self.con = sqlite3.connect(self.output_dataset)
+        self.con = sqlite3.connect(self.output_dataset, timeout=60)
         self.setup_database()
 
         self.should_break = False
@@ -87,6 +87,7 @@ class DatasetWriter:
         self.cur = self.con.cursor()
         self.cur.execute(f"CREATE TABLE IF NOT EXISTS {DATA_TABLE}({ID_FIELD}, {DATA_FIELD})")
         self.cur.execute(f"CREATE TABLE IF NOT EXISTS {PROCESSED_TABLE}({ID_FIELD}, {SUCCESS_FIELD})")
+        self.con.commit()
 
         self.already_processed = {
             r for (r,) in self.cur.execute(f"SELECT {ID_FIELD} FROM {PROCESSED_TABLE}").fetchall()
