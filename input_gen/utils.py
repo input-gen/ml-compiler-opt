@@ -4,6 +4,7 @@
 # SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 """Tool for generating inputs for an llvm module"""
 
+import signal
 import shutil
 import argparse
 import tempfile
@@ -88,6 +89,22 @@ def log_output(outs, errs):
         logger.debug(f"Errs: {errs}")
 
 
+def terminate_proc_sns(proc):
+    os.killpg(proc.pid, signal.SIGTERM)
+
+
+def kill_proc_sns(proc):
+    os.killpg(proc.pid, signal.SIGKILL)
+
+
+def terminate_proc(proc):
+    proc.terminate()
+
+
+def kill_proc(proc):
+    proc.kill()
+
+
 class InputGenUtils:
     def __init__(
         self,
@@ -151,30 +168,52 @@ class InputGenUtils:
             f.write(content)
 
     def get_output(
-        self, cmd, stdin=None, allow_fail=False, env=None, timeout=None, ExecFailTy=InputGenExecError
+        self,
+        cmd,
+        stdin=None,
+        allow_fail=False,
+        env=None,
+        timeout=None,
+        ExecFailTy=InputGenExecError,
     ):
         logger.debug(f"Running cmd: {' '.join(cmd)}")
+
+        # sns = False if cmd[0] != "clang++" else True
+        # Only clang++ needs it but just in case let's use a process group for everything
+        sns = True
+
         with subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             stdin=(subprocess.PIPE if stdin is not None else None),
             env=env,
+            start_new_session=sns,
         ) as proc:
             try:
                 outs, errs = proc.communicate(input=stdin, timeout=timeout)
                 status = proc.wait()
             except subprocess.TimeoutExpired as e:
-                logger.debug("Input gen timed out! Terminating...")
-                proc.terminate()
+                if sns:
+                    kill_fn = kill_proc_sns
+                    terminate_fn = terminate_proc_sns
+                else:
+                    kill_fn = kill_proc
+                    terminate_fn = terminate_proc
+
+                logger.debug("Process timed out! Terminating...")
+                terminate_fn(proc)
                 try:
                     proc.communicate(timeout=1)
                 except subprocess.TimeoutExpired as e:
                     logger.debug("Termination timed out! Killing...")
-                    proc.kill()
+                    kill_fn(proc)
                     proc.communicate()
+
                     logger.debug("Killed.")
                     raise InputGenTimeout(f"Timed out: {cmd}")
+
+                logger.debug("Terminated.")
                 raise InputGenTimeout(f"Timed out: {cmd}")
 
             if status != 0 and not allow_fail:
@@ -183,8 +222,11 @@ class InputGenUtils:
                 logger.debug(f"output:")
                 errs_decoded = errs.decode("utf-8")
                 logger.debug(errs_decoded)
+
+                logger.debug("Failed.")
                 raise ExecFailTy(cmd, outs.decode("utf-8"), errs_decoded)
 
+            logger.debug("Finished.")
             return outs, errs
 
     def get_entry_args(self):
@@ -201,7 +243,10 @@ class InputGenUtils:
     def get_executable_for_generation(self, mod, path):
         cmd = ["opt", "-O3", "--input-gen-mode=generate"] + self.mllvm + self.get_entry_args()
         instrumented_mod, _ = self.get_output(
-            cmd, mod, ExecFailTy=InputGenInstrumentationError, timeout=self.get_compile_timeout()
+            cmd,
+            mod,
+            ExecFailTy=InputGenInstrumentationError,
+            timeout=self.get_compile_timeout(),
         )
         self.save_temp(instrumented_mod, "instrumented_mod_for_generation.bc", binary=True)
         with tempfile.NamedTemporaryFile(dir=self.working_dir, suffix=".bc", delete=False) as f:
@@ -237,7 +282,10 @@ class InputGenUtils:
             + self.get_entry_args()
         )
         mod, _ = self.get_output(
-            cmd, mod, ExecFailTy=InputGenInstrumentationError, timeout=self.get_compile_timeout()
+            cmd,
+            mod,
+            ExecFailTy=InputGenInstrumentationError,
+            timeout=self.get_compile_timeout(),
         )
         self.save_temp(mod, "instrumented_no_opt_replay_module.bc", binary=True)
         return mod
@@ -248,7 +296,10 @@ class InputGenUtils:
             f.flush()
             cmd = ["clang++", f.name, "-linputgen.replay", "-lpthread", "-o", path] + self.mclang
             exe, _ = self.get_output(
-                cmd, mod, ExecFailTy=InputGenInstrumentationError, timeout=self.get_compile_timeout()
+                cmd,
+                mod,
+                ExecFailTy=InputGenInstrumentationError,
+                timeout=self.get_compile_timeout(),
             )
 
 
