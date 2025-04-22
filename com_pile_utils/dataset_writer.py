@@ -103,13 +103,20 @@ class DatasetWriter:
         )
 
     def add_success(self, idx, df):
-        self.cur.execute(
-            f"INSERT INTO {PROCESSED_TABLE} ({ID_FIELD}, {SUCCESS_FIELD}) VALUES(?, ?)", (idx, True)
-        )
-        self.cur.executemany(
-            f"INSERT INTO {DATA_TABLE} ({ID_FIELD}, {DATA_FIELD}) VALUES(?, ?)",
-            [(idx, pickle.dumps(d)) for d in df],
-        )
+        try:
+            self.cur.executemany(
+                f"INSERT INTO {DATA_TABLE} ({ID_FIELD}, {DATA_FIELD}) VALUES(?, ?)",
+                [(idx, pickle.dumps(d)) for d in df],
+            )
+        except sqlite3.DataError as e:
+            logger.error(f"During processing of idx {idx} encountered")
+            logger.error(e)
+            self.add_failure(idx)
+        else:
+            self.cur.execute(
+                f"INSERT INTO {PROCESSED_TABLE} ({ID_FIELD}, {SUCCESS_FIELD}) VALUES(?, ?)",
+                (idx, True),
+            )
 
     def process(self, ds, process_fn, process_fn_args):
         max_worklist_size = 300
