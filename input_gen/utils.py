@@ -78,6 +78,16 @@ class InputGenTimeout(InputGenError):
     pass
 
 
+def log_output(outs, errs):
+    logger.debug("Logging output")
+    if outs is not None:
+        outs = outs.decode("utf-8")
+        logger.debug(f"Outs: {outs}")
+    if outs is not None:
+        errs = errs.decode("utf-8")
+        logger.debug(f"Errs: {errs}")
+
+
 class InputGenUtils:
     def __init__(
         self,
@@ -208,13 +218,13 @@ class InputGenUtils:
                 "-o",
                 path,
             ] + self.mclang
-            exe, _ = self.get_output(
+            outs, errs = self.get_output(
                 cmd,
                 instrumented_mod,
                 ExecFailTy=InputGenInstrumentationError,
                 timeout=self.get_compile_timeout(),
             )
-        self.save_temp(exe, "generation.exe", binary=True)
+        log_output(outs, errs)
 
     def get_no_opt_replay_module(self, mod):
         cmd = (
@@ -376,7 +386,7 @@ class InputGenGenerate(InputGenUtils):
         self.repl_mod = self.get_no_opt_replay_module(self.mod)
 
         cmd = [self.gen_exec_path, "-1"]
-        _, errs = self.get_output(cmd, allow_fail=True)
+        _, errs = self.get_output(cmd, allow_fail=True, timeout=self.get_compile_timeout())
         re_match = re.search("  Num available functions: ([0-9]+)", errs.decode("utf-8"))
 
         if re_match is None:
