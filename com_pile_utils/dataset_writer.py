@@ -108,7 +108,7 @@ class DatasetWriter:
                 f"INSERT INTO {DATA_TABLE} ({ID_FIELD}, {DATA_FIELD}) VALUES(?, ?)",
                 [(idx, pickle.dumps(d)) for d in df],
             )
-        except sqlite3.DataError as e:
+        except (sqlite3.DataError, OverflowError) as e:
             logger.error(f"During processing of idx {idx} encountered")
             logger.error(e)
             self.add_failure(idx)
