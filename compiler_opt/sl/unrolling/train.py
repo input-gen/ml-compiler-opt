@@ -2,7 +2,7 @@ import argparse
 import tensorflow as tf
 import pandas as pd
 import logging
-import numpy
+import numpy as np
 import pandas
 from statistics import geometric_mean
 
@@ -24,7 +24,7 @@ def eval_speedup(model, features, labels):
         oracle_speedup = max(1, real.max())
 
         if max(predicted) > 1:
-            argmax = numpy.argmax(predicted)
+            argmax = np.argmax(predicted)
             predicted_speedup = real[argmax]
             # We chose an illegal factor
             if predicted_speedup == 0:
@@ -53,6 +53,7 @@ def convert_data_to_df(data):
 
     samples = []
     for x, base_rt, factor_rts in raw_samples:
+        print(".", end="", flush=True)
         res = unrolling_runner.get_ud_sample_from_raw(x, base_rt, factor_rts)
         if res is None:
             continue
@@ -83,11 +84,15 @@ def get_data(dataset):
 
 
 def get_df(dataset):
+    logger.info("Loading dataset...")
     datas = get_data(dataset)
+    logger.info("Done.")
+    logger.info("Converting data...")
     datas = [convert_data_to_df(data) for data in datas]
+    print()
+    logger.info("Done.")
     unroll_df = pd.concat(datas)
     unroll_df = unroll_df.reset_index(drop=True).astype(float)
-    print(unroll_df)
     return unroll_df
 
 
@@ -104,7 +109,7 @@ def parse_args_and_run():
 
     unroll_df = get_df(args.dataset)
 
-    print(unroll_df.columns)
+    logger.info(unroll_df.columns)
 
     cols = list(unroll_df.columns)
     for i, col in enumerate(cols):
@@ -112,22 +117,22 @@ def parse_args_and_run():
             break
     unroll_features = unroll_df[cols[:i]]
     unroll_labels = unroll_df[cols[i:]]
-    print(unroll_features.columns)
-    print(unroll_labels.columns)
+    logger.debug(unroll_features.columns)
+    logger.debug(unroll_labels.columns)
 
     assert len(unroll_labels.columns) == ADVICE_TENSOR_LEN
 
     split = len(unroll_features.index) // 2
 
-    print(len(unroll_labels.index))
+    logger.debug(len(unroll_labels.index))
 
     test_unroll_features = unroll_features.iloc[split:]
     test_unroll_labels = unroll_labels.iloc[split:]
-    print(len(test_unroll_labels.index))
+    logger.info(f"Testing split: {len(test_unroll_labels.index)}")
 
     train_unroll_features = unroll_features.iloc[:split]
     train_unroll_labels = unroll_labels.iloc[:split]
-    print(len(train_unroll_labels.index))
+    logger.info(f"Training split: {len(train_unroll_labels.index)}")
 
     model = tf.keras.models.Sequential(
         [

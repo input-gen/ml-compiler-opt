@@ -50,7 +50,7 @@ python3 input_gen.py --module input_module.ll (--entry-function=ENTRY_FUNCTION |
 ### Generating ComPileLoop from ComPile
 
 ``` shell
-python3 generate_com_pile_loop.py --dataset path/to/ComPile/ --output-dataset ./ComPileLoop
+python3 generate_com_pile_loop.py --dataset ~/datasets/ComPile/ --output-dataset ./ComPileLoop
 ```
 
 USR1 can be sent to get a status report, USR2 can be sent to abort and write out
@@ -59,19 +59,19 @@ the current pending database file.
 ### Generating ComPileLoop+Inputs from ComPileLoop
 
 ``` shell
-python3 generate_com_pile_loop_inputs.py --dataset path/to/ComPileLoop/ --output-dataset ./ComPileLoopInputs/
+python3 generate_com_pile_loop_inputs.py --dataset ~/datasets/ComPileLoop/ --output-dataset ./ComPileLoopInputs/
 ```
 
 ### Demo of how to process ComPileLoop
 
 ``` shell
-python3 process_com_pile_loop_demo.py --dataset path/to/ComPileLoop/
+python3 process_com_pile_loop_demo.py --dataset ~/datasets/ComPileLoop/
 ```
 
 ### Demo of how to process ComPileLoop+Inputs
 
 ``` shell
-python3 process_com_pile_loop_inputs_demo.py --dataset path/to/ComPileLoopInputs/
+python3 process_com_pile_loop_inputs_demo.py --dataset ~/datasets/ComPileLoopInputs/
 ```
 
 This will read the dataset and replay all inputs in it.
@@ -112,10 +112,13 @@ compiler_opt/sl/unrolling/rts/unrolling_profiler.o
 
 The following can be used to generate training samples
 ``` shell
-PYTHONPATH=$PYTHONPATH:. python3 compiler_opt/sl/unrolling/process_com_pile_loop_inputs.py --dataset path/to/ComPileLoopInputs  --output-dataset path/to//UnrollTrainingSamples -mclang=compiler_opt/sl/unrolling/rts/unrolling_profiler.o  -mclang=-lpfm
+PYTHONPATH=$PYTHONPATH:. python3 -m compiler_opt.sl.unrolling.process_com_pile_loop_inputs --dataset ~/datasets/ComPileLoopInputs  --output-dataset ~/datasets//UnrollTrainingSamples.sqlite3 -mclang=compiler_opt/sl/unrolling/rts/unrolling_profiler.o  -mclang=-lpfm
 ```
 
 Note the additional `-mclang` flag which links in the profiling runtime.
 
 ### Training the unroll heuristic
 
+``` shell
+PYTHONPATH=$PYTHONPATH:. python3 -m compiler_opt.sl.unrolling.train --dataset ~/datasets/UnrollTrainingSamples.sqlite3
+```

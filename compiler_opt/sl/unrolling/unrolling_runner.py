@@ -460,7 +460,20 @@ def get_speedup_factor(base: List[int], opt: List[int]):
     return gmean(speedup_factors)
 
 
+def rt_reduce(l):
+    arr = np.array(l, dtype=float)
+    arr = arr[~np.isnan(arr)]  # remove NaNs
+    if arr.size == 0:
+        return None
+    return np.median(arr)
+    # s = pd.Series(l).dropna()
+    # if len(s) == 0:
+    #     return None
+    # return s.median()
+
+
 def flatten(l):
+    return [rt_reduce(sl) for sl in l]
     return sum(l, [])
 
 
