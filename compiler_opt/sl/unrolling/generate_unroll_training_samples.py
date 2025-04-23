@@ -15,7 +15,7 @@ from input_gen.utils import Input, InputGenError
 from com_pile_utils.dataset_writer import DatasetWriter, ProcessResult
 from com_pile_utils.dataset_reader import DatasetReader
 
-import unrolling_runner
+from . import unrolling_runner
 
 logger = logging.getLogger(__name__)
 
