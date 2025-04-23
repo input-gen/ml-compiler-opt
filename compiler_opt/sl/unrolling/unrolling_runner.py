@@ -460,7 +460,7 @@ def get_speedup_factor(base: List[int], opt: List[int]):
     return gmean(speedup_factors)
 
 
-def get_ud_sample_from_raw(base_runtime, factor_runtimes):
+def get_ud_sample_from_raw(x, base_runtime, factor_runtimes):
     # Obtain speedup factors for all unroll factors.
     # Encode failure to unroll as speedup of 0.0.
     y = [
@@ -472,7 +472,7 @@ def get_ud_sample_from_raw(base_runtime, factor_runtimes):
     if any(r is None for r in y):
         return None
 
-    return (x, y, factor_runtime)
+    return (x, y)
 
 
 def generate_samples(decision_results, inputs, replay_options, raw=False):
@@ -502,8 +502,8 @@ def generate_samples(decision_results, inputs, replay_options, raw=False):
         res = get_ud_raw_sample(ud)
         if res is None:
             return None
-        base_runtime, factor_runtimes = res
-        return get_ud_sample_from_raw(base_runtime, factor_runtimes)
+        x, base_runtime, factor_runtimes = res
+        return get_ud_sample_from_raw(x, base_runtime, factor_runtimes)
 
     def get_ud_raw_sample(ud: UnrollDecision):
         x = ud.features
@@ -531,7 +531,7 @@ def generate_samples(decision_results, inputs, replay_options, raw=False):
 
         logging.debug(f"Got base_runtime {base_runtime}")
 
-        return base_runtime, factor_runtimes
+        return x, base_runtime, factor_runtimes
 
     def get_ud_raw_samples(uds: Iterable[UnrollDecision]):
         for ud in uds:
