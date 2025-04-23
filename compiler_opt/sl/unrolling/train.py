@@ -5,11 +5,10 @@ import logging
 import numpy
 import pandas
 from statistics import geometric_mean
-from datasets import load_dataset
 
-import unrolling_runner
+from . import unrolling_runner
 
-from unroll_model import ADVICE_TENSOR_LEN, UNROLL_FACTOR_OFFSET, MAX_UNROLL_FACTOR
+from .unroll_model import ADVICE_TENSOR_LEN, UNROLL_FACTOR_OFFSET, MAX_UNROLL_FACTOR
 from com_pile_utils.dataset_reader import DatasetReader
 
 logger = logging.getLogger(__name__)
@@ -78,6 +77,20 @@ def convert_data_to_df(data):
     return df
 
 
+def get_data(dataset):
+    with DatasetReader(dataset) as dr:
+        return [d for _, d in dr.get_iter()]
+
+
+def get_df(dataset):
+    datas = get_data(dataset)
+    datas = [convert_data_to_df(data) for data in datas]
+    unroll_df = pd.concat(datas)
+    unroll_df = unroll_df.reset_index(drop=True).astype(float)
+    print(unroll_df)
+    return unroll_df
+
+
 def parse_args_and_run():
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset", required=True)
@@ -89,12 +102,7 @@ def parse_args_and_run():
     else:
         logging.basicConfig(level=logging.INFO)
 
-    with DatasetReader(args.dataset) as dr:
-        dfs = [d for _, d in dr.get_iter()]
-        dfs = [convert_data_to_df(df) for df in dfs]
-        unroll_df = pd.concat(dfs)
-        unroll_df = unroll_df.reset_index(drop=True).astype(float)
-        print(unroll_df)
+    unroll_df = get_df(args.dataset)
 
     print(unroll_df.columns)
 

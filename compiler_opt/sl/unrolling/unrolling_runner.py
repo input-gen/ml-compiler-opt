@@ -31,7 +31,7 @@ import re
 import numpy as np
 import pandas as pd
 from typing import Dict, Tuple, BinaryIO, Union, List, Optional, Iterable
-from unroll_model import ADVICE_TENSOR_LEN, UNROLL_FACTOR_OFFSET, MAX_UNROLL_FACTOR
+from .unroll_model import ADVICE_TENSOR_LEN, UNROLL_FACTOR_OFFSET, MAX_UNROLL_FACTOR
 
 from statistics import geometric_mean as gmean
 
@@ -460,11 +460,18 @@ def get_speedup_factor(base: List[int], opt: List[int]):
     return gmean(speedup_factors)
 
 
+def flatten(l):
+    return sum(l, [])
+
+
 def get_ud_sample_from_raw(x, base_runtime, factor_runtimes):
     # Obtain speedup factors for all unroll factors.
     # Encode failure to unroll as speedup of 0.0.
+    base_runtime = flatten(base_runtime)
     y = [
-        get_speedup_factor(base_runtime, factor_runtime) if factor_runtime is not None else 0.0
+        get_speedup_factor(base_runtime, flatten(factor_runtime))
+        if factor_runtime is not None
+        else 0.0
         for factor_runtime in factor_runtimes
     ]
 
@@ -481,16 +488,18 @@ def generate_samples(decision_results, inputs, replay_options, raw=False):
             for inpt in inputs:
                 num = 5
                 timeout = 1
+                rts = []
                 for res in igr.replay_input(inpt.data, inpt.entry_no, num, timeout=timeout):
                     logger.debug(f"Res {res}")
                     re_match = re.search("MLGO_LOOP_UNROLL_TIMER ([0-9]+)", res.outs.decode("utf-8"))
                     if re_match is None:
                         logger.debug(f"No match")
-                        yield None
+                        rts.append(None)
                     else:
                         f = int(re_match.group(1))
                         logger.debug(f"Match {f}")
-                        yield f
+                        rts.append(f)
+                yield rts
 
     def get_udr_runtime(udr: UnrollDecisionResult):
         if udr.action or udr.factor == 1:
