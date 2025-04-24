@@ -212,214 +212,224 @@ class UnrollCompilerHost:
 
         self.process_and_args = self.process_and_args + args_to_add
 
-        try:
-            logger.debug(f"Opening pipes {self.to_compiler} and {self.from_compiler}")
-            os.mkfifo(self.to_compiler, 0o666)
-            os.mkfifo(self.from_compiler, 0o666)
+        cr = self.compile_once(
+            mod,
+            self.on_features_collect,
+            self.on_heuristic_print,
+            self.on_action_print,
+            lambda index: None,
+            lambda index, tensor, heuristic: make_response_for_factor(heuristic),
+        )
+        if cr is None:
+            return
+        self.num_decisions = cr.num_decisions
+        if self.num_decisions == 0:
+            return
+        self.features_spec = cr.features_spec
+        self.advice_spec = cr.advice_spec
 
-            cr = self.compile_once(
-                mod,
-                self.on_features_collect,
-                self.on_heuristic_print,
-                self.on_action_print,
-                lambda index: None,
-                lambda index, tensor, heuristic: make_response_for_factor(heuristic),
-            )
-            if cr is None:
-                return
-            self.num_decisions = cr.num_decisions
-            if self.num_decisions == 0:
-                return
-            self.features_spec = cr.features_spec
-            self.advice_spec = cr.advice_spec
+        logger.debug(f"Found {self.num_decisions} decisions to make")
+        logger.debug(f"Collected features: {self.features}")
 
-            logger.debug(f"Found {self.num_decisions} decisions to make")
-            logger.debug(f"Collected features: {self.features}")
-
-            for decision in range(self.num_decisions):
-                logger.debug(f"Exploring decision: {decision}")
-                decision_results = []
-                # From factor = 1 (i.e. no unroll) to MAX_UNROLL_FACTOR inclusive
-                for factor in range(1, MAX_UNROLL_FACTOR + 1):
-                    logger.debug(f"Exploring factor: {factor}")
-                    cr = self.compile_once(
-                        mod,
-                        lambda index, features: (),
-                        lambda index, heuristic: (),
-                        lambda index, action: self.on_action_save(index, action)
-                        if index == decision
-                        else None,
-                        lambda index: ("__mlgo_unrolled_loop_begin", "__mlgo_unrolled_loop_end")
-                        if index == decision
-                        else None,
-                        lambda index, tensor, heuristic: make_response_for_factor(factor)
-                        if index == decision
-                        else make_response_for_factor(heuristic),
-                    )
-                    if cr is None:
-                        break
-                    out_module = cr.module
-                    decision_results.append(UnrollDecisionResult(factor, self.cur_action, out_module))
-                else:
-                    # If we did not break the above loop
-                    ud = UnrollDecision(self.features[decision], decision_results)
-                    logger.debug(pprint.pformat(ud))
-                    logger.debug("Got result:")
-                    yield ud
-                    continue
-                break
-
-        finally:
-            logger.debug(f"Closing pipes")
-            os.unlink(self.to_compiler)
-            os.unlink(self.from_compiler)
+        for decision in range(self.num_decisions):
+            logger.debug(f"Exploring decision: {decision}")
+            decision_results = []
+            # From factor = 1 (i.e. no unroll) to MAX_UNROLL_FACTOR inclusive
+            for factor in range(1, MAX_UNROLL_FACTOR + 1):
+                logger.debug(f"Exploring factor: {factor}")
+                cr = self.compile_once(
+                    mod,
+                    lambda index, features: (),
+                    lambda index, heuristic: (),
+                    lambda index, action: self.on_action_save(index, action)
+                    if index == decision
+                    else None,
+                    lambda index: ("__mlgo_unrolled_loop_begin", "__mlgo_unrolled_loop_end")
+                    if index == decision
+                    else None,
+                    lambda index, tensor, heuristic: make_response_for_factor(factor)
+                    if index == decision
+                    else make_response_for_factor(heuristic),
+                )
+                if cr is None:
+                    break
+                out_module = cr.module
+                decision_results.append(UnrollDecisionResult(factor, self.cur_action, out_module))
+            else:
+                # If we did not break the above loop
+                ud = UnrollDecision(self.features[decision], decision_results)
+                logger.debug(pprint.pformat(ud))
+                logger.debug("Got result:")
+                yield ud
+                continue
+            break
 
     def compile_once(
         self, mod, on_features, on_heuristic, on_action, get_instrument_response, get_response
     ):
         cur_decision = 0
 
-        logger.debug(f"Launching compiler {' '.join(self.process_and_args)}")
-        compiler_proc = subprocess.Popen(
-            self.process_and_args,
-            stderr=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stdin=subprocess.PIPE,
-        )
-        logger.debug(f"Sending module")
-        compiler_proc.stdin.write(mod)
+        logger.debug(f"Opening pipes {self.to_compiler} and {self.from_compiler}")
 
-        # FIXME is this the proper way to close the pipe? if we don't set it to
-        # None then the communicate call will try to close it again and raise an
-        # error
-        compiler_proc.stdin.close()
-        compiler_proc.stdin = None
+        try:
+            os.unlink(self.to_compiler)
+        except FileNotFoundError as e:
+            pass
+        try:
+            os.unlink(self.from_compiler)
+        except FileNotFoundError as e:
+            pass
 
-        def set_nonblocking(pipe):
-            os.set_blocking(pipe.fileno(), False)
+        os.mkfifo(self.to_compiler, 0o666)
+        os.mkfifo(self.from_compiler, 0o666)
 
-        def set_blocking(pipe):
-            os.set_blocking(pipe.fileno(), True)
+        try:
+            logger.debug(f"Launching compiler {' '.join(self.process_and_args)}")
+            compiler_proc = subprocess.Popen(
+                self.process_and_args,
+                stderr=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stdin=subprocess.PIPE,
+            )
+            logger.debug(f"Sending module")
+            compiler_proc.stdin.write(mod)
 
-        output_module = b""
-        tensor_specs = None
-        advice_spec = None
+            # FIXME is this the proper way to close the pipe? if we don't set it to
+            # None then the communicate call will try to close it again and raise an
+            # error
+            compiler_proc.stdin.close()
+            compiler_proc.stdin = None
 
-        set_nonblocking(compiler_proc.stdout)
+            def set_nonblocking(pipe):
+                os.set_blocking(pipe.fileno(), False)
 
-        logger.debug(f"Starting communication")
-        with io.BufferedWriter(io.FileIO(self.to_compiler, "w+b")) as tc:
-            with io.BufferedReader(io.FileIO(self.from_compiler, "r+b")) as fc:
-                # We need to set the reading pipe to nonblocking for the purpose
-                # of peek'ing and checking if it is readable without blocking
-                # and watch for the process diyng as well. We rever to blocking
-                # mode for the actual communication.
+            def set_blocking(pipe):
+                os.set_blocking(pipe.fileno(), True)
 
-                def input_available():
-                    nonlocal output_module
+            output_module = b""
+            tensor_specs = None
+            advice_spec = None
 
-                    output = compiler_proc.stdout.read()
-                    if output is not None:
-                        output_module += output
-                    if len(fc.peek(1)) > 0:
-                        return "yes"
-                    if compiler_proc.poll() is not None:
-                        return "dead"
-                    return "no"
+            set_nonblocking(compiler_proc.stdout)
 
-                set_nonblocking(fc)
-                while True:
-                    ia = input_available()
-                    if ia == "dead":
-                        return None
-                    elif ia == "yes":
-                        break
-                    elif ia == "no":
-                        continue
-                    else:
-                        assert False
+            logger.debug(f"Starting communication")
 
-                set_blocking(fc)
+            with io.BufferedWriter(io.FileIO(self.to_compiler, "w+b")) as tc:
+                with io.BufferedReader(io.FileIO(self.from_compiler, "r+b")) as fc:
+                    # We need to set the reading pipe to nonblocking for the purpose
+                    # of peek'ing and checking if it is readable without blocking
+                    # and watch for the process diyng as well. We rever to blocking
+                    # mode for the actual communication.
 
-                header = log_reader._read_header(fc)
-                tensor_specs = header.features
-                advice_spec = header.advice
-                context = None
+                    def input_available():
+                        nonlocal output_module
 
-                set_nonblocking(fc)
-                while True:
-                    ia = input_available()
-                    if ia == "dead":
-                        break
-                    elif ia == "yes":
-                        ...
-                    elif ia == "no":
-                        continue
-                    else:
-                        assert False
+                        output = compiler_proc.stdout.read()
+                        if output is not None:
+                            output_module += output
+                        if len(fc.peek(1)) > 0:
+                            return "yes"
+                        if compiler_proc.poll() is not None:
+                            return "dead"
+                        return "no"
+
+                    set_nonblocking(fc)
+                    while True:
+                        ia = input_available()
+                        if ia == "dead":
+                            return None
+                        elif ia == "yes":
+                            break
+                        elif ia == "no":
+                            continue
+                        else:
+                            assert False
 
                     set_blocking(fc)
 
-                    next_event = fc.readline()
-                    if not next_event:
-                        break
-                    (
-                        last_context,
-                        observation_id,
-                        features,
-                        _,
-                    ) = log_reader.read_one_observation(context, next_event, fc, tensor_specs, None)
-                    if last_context != context:
-                        logger.debug(f"context: {last_context}")
-                    context = last_context
-                    logger.debug(f"observation: {observation_id}")
-                    tensor_values = []
-                    for fv in features:
-                        logger.debug(fv.to_numpy())
-                        tensor_values.append(fv)
+                    header = log_reader._read_header(fc)
+                    tensor_specs = header.features
+                    advice_spec = header.advice
+                    context = None
 
-                    on_features(cur_decision, tensor_values)
-
-                    heuristic = self.read_heuristic(fc)
-                    # TODO is this want we want to do??? Kind of unfair to the
-                    # unroll heuristic if we choose to evaluate using the
-                    # heuristic responses.
-                    if heuristic > MAX_UNROLL_FACTOR:
-                        heuristic = MAX_UNROLL_FACTOR
-                    on_heuristic(cur_decision, heuristic)
-
-                    send(tc, get_response(cur_decision, tensor_values, heuristic), advice_spec)
-
-                    on_action(cur_decision, self.read_action(fc))
-
-                    send_instrument_response(tc, get_instrument_response(cur_decision))
-
-                    cur_decision += 1
                     set_nonblocking(fc)
+                    while True:
+                        ia = input_available()
+                        if ia == "dead":
+                            break
+                        elif ia == "yes":
+                            ...
+                        elif ia == "no":
+                            continue
+                        else:
+                            assert False
 
-                set_blocking(fc)
+                        set_blocking(fc)
 
-        set_blocking(compiler_proc.stdout)
+                        next_event = fc.readline()
+                        if not next_event:
+                            break
+                        (
+                            last_context,
+                            observation_id,
+                            features,
+                            _,
+                        ) = log_reader.read_one_observation(
+                            context, next_event, fc, tensor_specs, None
+                        )
+                        if last_context != context:
+                            logger.debug(f"context: {last_context}")
+                        context = last_context
+                        logger.debug(f"observation: {observation_id}")
+                        tensor_values = []
+                        for fv in features:
+                            logger.debug(fv.to_numpy())
+                            tensor_values.append(fv)
 
-        outs, errs = compiler_proc.communicate()
-        outs = output_module + outs
-        logger.debug("Errs")
-        # logger.debug(errs.decode("utf-8"))
-        logger.debug(f"Outs size {len(outs)}")
-        status = compiler_proc.wait()
-        logger.debug(f"Status {status}")
+                        on_features(cur_decision, tensor_values)
 
-        if self.emit_assembly:
-            outs = outs.decode("utf-8")
-            logger.debug("Output module:")
-            logger.debug(outs)
+                        heuristic = self.read_heuristic(fc)
+                        # TODO is this want we want to do??? Kind of unfair to the
+                        # unroll heuristic if we choose to evaluate using the
+                        # heuristic responses.
+                        if heuristic > MAX_UNROLL_FACTOR:
+                            heuristic = MAX_UNROLL_FACTOR
+                        on_heuristic(cur_decision, heuristic)
 
-        return CompilationResult(
-            module=outs,
-            features_spec=tensor_specs,
-            advice_spec=advice_spec,
-            num_decisions=cur_decision,
-        )
+                        send(tc, get_response(cur_decision, tensor_values, heuristic), advice_spec)
+
+                        on_action(cur_decision, self.read_action(fc))
+
+                        send_instrument_response(tc, get_instrument_response(cur_decision))
+
+                        cur_decision += 1
+                        set_nonblocking(fc)
+
+                    set_blocking(fc)
+
+            set_blocking(compiler_proc.stdout)
+
+            outs, errs = compiler_proc.communicate()
+            outs = output_module + outs
+            logger.debug("Errs")
+            # logger.debug(errs.decode("utf-8"))
+            logger.debug(f"Outs size {len(outs)}")
+            status = compiler_proc.wait()
+            logger.debug(f"Status {status}")
+
+            if self.emit_assembly:
+                outs = outs.decode("utf-8")
+                logger.debug("Output module:")
+                logger.debug(outs)
+
+            return CompilationResult(
+                module=outs,
+                features_spec=tensor_specs,
+                advice_spec=advice_spec,
+                num_decisions=cur_decision,
+            )
+        finally:
+            compiler_proc.kill()
 
 
 @gin.configurable(module="runners")
