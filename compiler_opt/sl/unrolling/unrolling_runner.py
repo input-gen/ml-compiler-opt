@@ -461,13 +461,16 @@ def DUMP_MODULE(module, ident=""):
     print(output)
 
 
-def get_speedup_factor(base: List[int], opt: List[int]):
+def get_speedup_factor(base: np.array, opt: np.array):
     # This will get element wise speedup factors for all inputs where either
     # succeeded
-    speedup_factors = (pd.Series(base) / pd.Series(opt)).dropna()
-    if len(speedup_factors) == 0:
+    arr = base / opt
+    arr = arr[~np.isnan(arr)]  # remove NaNs
+    if arr.size == 0:
         return None
-    return gmean(speedup_factors)
+    geomean = np.exp(np.mean(np.log(arr)))
+    return geomean
+    # return gmean(arr)
 
 
 def rt_reduce(l):
@@ -483,26 +486,26 @@ def rt_reduce(l):
 
 
 def flatten(l):
-    return [rt_reduce(sl) for sl in l]
-    return sum(l, [])
+    return np.fromiter((rt_reduce(sl) for sl in l), dtype=float)
 
 
 def get_ud_sample_from_raw(x, base_runtime, factor_runtimes):
-    # Obtain speedup factors for all unroll factors.
-    # Encode failure to unroll as speedup of 0.0.
-    base_runtime = flatten(base_runtime)
-    y = [
-        get_speedup_factor(base_runtime, flatten(factor_runtime))
-        if factor_runtime is not None
-        else 0.0
-        for factor_runtime in factor_runtimes
-    ]
+    with np.errstate(divide="ignore", invalid="ignore"):
+        # Obtain speedup factors for all unroll factors.
+        # Encode failure to unroll as speedup of 0.0.
+        base_runtime = flatten(base_runtime)
+        y = [
+            get_speedup_factor(base_runtime, flatten(factor_runtime))
+            if factor_runtime is not None
+            else 0.0
+            for factor_runtime in factor_runtimes
+        ]
 
-    # If we did not manage to obtain a speedup we fail
-    if any(r is None for r in y):
-        return None
+        # If we did not manage to obtain a speedup we fail
+        if any(r is None for r in y):
+            return None
 
-    return (x, y)
+        return (x, y)
 
 
 def generate_samples(decision_results, inputs, replay_options, raw=False):
