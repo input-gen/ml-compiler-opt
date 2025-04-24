@@ -29,10 +29,10 @@ class SqliteDatasetReader:
         self.con.close()
 
     def get_iter(self):
-        return iter_sqlite(self.cur.execute(f"SELECT rowid, data FROM data"))
+        return iter_sqlite(self.cur.execute("SELECT rowid, data FROM data"))
 
     def get_one_iter(self, one):
-        return iter_sqlite(self.cur.execute(f"SELECT rowid, data FROM data WHERE rowid=?", one))
+        return iter_sqlite(self.cur.execute("SELECT rowid, data FROM data WHERE rowid=?", (one,)))
 
 
 class DatasetsDatasetReader:
