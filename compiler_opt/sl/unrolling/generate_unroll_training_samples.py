@@ -32,6 +32,8 @@ def parse_args_and_run():
     parser.add_argument("-mclang", default=[], action="append")
     parser.add_argument("-mllvm", default=[], action="append")
 
+    parser.add_argument("--one", type=int, default=None)
+
     parser.add_argument("--debug", default=False, action="store_true")
 
     args = parser.parse_args()
@@ -49,20 +51,26 @@ def main(args):
         logging.basicConfig(level=logging.INFO)
 
     with DatasetReader(args.dataset) as dr:
-        with DatasetWriter(args.output_dataset) as dw:
-            dw.process(dr.get_iter(), process_module_wrapper, args)
+        if args.one is None:
+            with DatasetWriter(args.output_dataset) as dw:
+                dw.process(dr.get_iter(), process_module_wrapper, args)
+        else:
+            it = dr.get_one_iter(args.one)
+            data = next(it)[1]
+            process_module(args, args.one, data)
 
 
 @ray.remote
 def process_module_wrapper(args, i, data):
-    res = process_module(data, args.dump_llvm, args)
+    res = process_module(args, i, data)
     if res is None:
         return ProcessResult(i, None)
     else:
         return ProcessResult(i, res)
 
 
-def process_module(data, dump_llvm, args):
+def process_module(args, idx, data):
+    dump_llvm = args.dump_llvm
     inputs = data["inputs"]
     if len(inputs) == 0:
         logger.debug("No inputs")
