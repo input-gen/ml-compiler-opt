@@ -117,7 +117,6 @@ def get_X_Y_from_df(unroll_df):
 
 def get_X_Y(dataset):
     unroll_df = get_df(dataset)
-    unroll_df = unroll_df.sample(frac=1).reset_index(drop=True)
     logger.info(unroll_df.columns)
     return get_X_Y_from_df(unroll_df)
 
@@ -161,7 +160,10 @@ class EvalCallback(tf.keras.callbacks.Callback):
 
 def parse_args_and_run():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dataset", required=True)
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument("--dataset")
+    group.add_argument("--preprocessed-dataset")
+    parser.add_argument("--preprocessed-output-dataset")
     parser.add_argument("--debug", default=False, action="store_true")
     args = parser.parse_args()
 
@@ -170,7 +172,24 @@ def parse_args_and_run():
     else:
         logging.basicConfig(level=logging.INFO)
 
-    X, Y = get_X_Y(args.dataset)
+    if args.preprocessed_dataset is not None and args.preprocessed_output_dataset is not None:
+        print("Already preprocessed")
+        return 1
+
+    if args.dataset is not None and args.preprocessed_output_dataset is not None:
+        df = get_df(args.dataset)
+        df.to_parquet(args.preprocessed_output_dataset)
+        return 0
+
+    if args.preprocessed_dataset is not None:
+        df = pd.read_parquet(args.preprocessed_dataset)
+    elif args.dataset is not None:
+        df = get_df(args.dataset)
+    else:
+        assert False
+
+    df = df.sample(frac=1).reset_index(drop=True)
+    X, Y = get_X_Y_from_df(df)
     X_train, Y_train, X_test, Y_test = split(X, Y)
 
     model = tf.keras.models.Sequential(
@@ -198,6 +217,8 @@ def parse_args_and_run():
 
     eval_speedup(model, X_test, Y_test)
 
+    return 0
+
 
 if __name__ == "__main__":
-    parse_args_and_run()
+    exit(parse_args_and_run())
