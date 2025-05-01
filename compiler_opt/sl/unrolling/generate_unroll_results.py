@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-
 import pandas
 import psutil
 import argparse
@@ -88,50 +86,51 @@ os.sched_setaffinity(0, [CPUS[len(CPUS) - 1]])
 assert set(CPUS.keys()) == set(range(len(CPUS)))
 
 
-@ray.remote(num_cpus=0, resources={PHYSICAL_CORE_RESOURCE: 1})
-def benchmark_module(args, i, data):
-    decision_results = data["decsion_results"]
+@ray.remote
+def process_module_wrapper(args, i, data):
+    res = process_module(args, i, data)
+    if res is None:
+        return ProcessResult(i, None)
+    else:
+        return ProcessResult(i, res)
+
+
+def process_module(args, idx, data):
+    dump_llvm = args.dump_llvm
     inputs = data["inputs"]
+    if len(inputs) == 0:
+        logger.debug("No inputs")
+        return None
+    if all([r is None for r in data["replays"]]):
+        logger.debug("No valid replays")
+        return None
 
-    hostname = socket.gethostname()
-    print(f"HOSTNAME {HOSTNAME} hostname {hostname} cpus {CPUS}")
-    core_id = ray.get_runtime_context().worker.core_worker.resource_ids()[PHYSICAL_CORE_RESOURCE][0][0]
-    assert core_id < len(CPUS)
-    os.sched_setaffinity(0, [CPUS[core_id]])
+    process_and_args = [
+        "opt",
+        "-O3",
+    ]
 
-    def to_dict(**kwargs):
-        return kwargs
+    with tempfile.TemporaryDirectory() as tmpdir:
+        uch = unrolling_runner.UnrollCompilerHost(False, args.debug)
 
-    COMPILE_TIMEOUT = 2
-    replay_options = to_dict(
-        working_dir=None,
-        save_temps=args.save_temps,
-        mclang=args.mclang,
-        mllvm=args.mllvm,
-        temp_dir=args.temp_dir,
-        compile_timeout=COMPILE_TIMEOUT,
-    )
-
-    try:
-        samples = list(
-            unrolling_runner.generate_samples(decision_results, inputs, replay_options, raw=True)
+        decision_results = list(
+            uch.get_unroll_decision_results(data["module"], process_and_args, tmpdir)
         )
-    except InputGenError as e:
-        return ProcessResult(i, None)
 
-    if len(samples) == 0:
-        logger.debug("No samples generated")
-        return ProcessResult(i, None)
-    if samples is None:
-        logger.debug(f"InputGenReplay failed: {e}")
-        return ProcessResult(i, None)
+    if len(decision_results) is None:
+        return None
+
+    features_spec = uch.get_features_spec()
+    advice_spec = uch.get_advice_spec()
 
     d = {
-        "features_spec": data["features_spec"],
-        "advice_spec": data["advice_spec"],
-        "samples": samples,
+        "features_spec": features_spec,
+        "advice_spec": advice_spec,
+        "decision_results": decision_results,
+        "inputs": inputs,
     }
-    return ProcessResult(i, [d])
+
+    return [d]
 
 
 if __name__ == "__main__":

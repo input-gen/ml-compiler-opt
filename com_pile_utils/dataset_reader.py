@@ -31,6 +31,19 @@ class SqliteDatasetReader:
     def get_iter(self):
         return iter_sqlite(self.cur.execute("SELECT rowid, data FROM data"))
 
+    def get_iter_unprocessed(self):
+        return iter_sqlite(
+            self.cur.execute(
+                """
+            SELECT rowid, data
+            FROM data WHERE id NOT IN (
+              SELECT id
+              FROM processed
+            )
+            """
+            )
+        )
+
     def get_one_iter(self, one):
         return iter_sqlite(self.cur.execute("SELECT rowid, data FROM data WHERE rowid=?", (one,)))
 
