@@ -10,15 +10,11 @@ import shutil
 import tempfile
 import subprocess
 import json
-import signal
-import sys
-import pandas
 import ray
 import logging
 
-from datasets import load_dataset
-
-from dataset_writer import DatasetWriter, ProcessResult
+from .dataset_writer import DatasetWriter, ProcessResult
+from .dataset_reader import DatasetReader
 
 logger = logging.getLogger(__name__)
 
@@ -26,37 +22,55 @@ logger = logging.getLogger(__name__)
 def parse_args_and_run():
     parser = argparse.ArgumentParser(description="A tool for making a LLVM IR loop dataset")
 
-    parser.add_argument("--language", default="c")
+    #parser.add_argument("--language", default="c")
 
     parser.add_argument("--save-temps", action="store_true", default=False)
     parser.add_argument("--temp-dir", default=None)
 
     parser.add_argument("--dataset", required=True)
     parser.add_argument("--output-dataset", required=True)
-    parser.add_argument("--output-dataset-json", default=None)
-    parser.add_argument("--begin", default=0, type=int)
-    parser.add_argument("--end", default=None, type=int)
+
+    parser.add_argument("--one", type=int, default=None)
+
+    parser.add_argument("--debug", default=False, action="store_true")
 
     args = parser.parse_args()
 
-    ds = load_dataset(os.path.join(args.dataset, args.language), split="train", streaming=True)
+    # args.dataset = os.path.join(args.dataset, args.language)
 
-    dw = DatasetWriter(args.output_dataset, args.output_dataset_json, args.begin, args.end)
-    dw.process(ds, process_module_wrapper, args)
+    main(args)
+
+
+def main(args):
+    if args.debug:
+        logging.basicConfig(level=logging.DEBUG)
+    else:
+        logging.basicConfig(level=logging.INFO)
+
+    with DatasetReader(args.dataset) as dr:
+        if args.one is None:
+            with DatasetWriter(args.output_dataset) as dw:
+                dw.process(dr.get_iter(), process_module_wrapper, args)
+        else:
+            it = dr.get_one_iter(args.one)
+            process_module(args, args.one, next(it)[1])
 
 
 @ray.remote
 def process_module_wrapper(args, i, data):
-    return process_module(data["content"], data["language"], i, args)
+    return process_module_impl(data["content"], data["language"], i, args)
 
 
-def process_module_wrapper_local(args, i, data):
-    return process_module(data["content"], data["language"], i, args)
+def process_module(args, i, data):
+    return process_module_impl(data["content"], data["language"], i, args)
 
 
-def process_module(module, language, idx, args):
+def process_module_impl(module, language, idx, args):
     try:
         outdir = tempfile.mkdtemp(dir=args.temp_dir)
+        if args.save_temps:
+            with open(os.path.join(outdir, 'module.bc'), 'wb') as f:
+                f.write(module)
         return process_module_in_dir(module, language, idx, outdir)
     finally:
         if not args.save_temps:
@@ -64,17 +78,14 @@ def process_module(module, language, idx, args):
 
 
 def process_module_in_dir(module, language, idx, temp_outdir):
-    size_estimate = 0
-
-    prefix = str(os.path.join(temp_outdir, "output."))
-    suffix = ".bc"
+    metadata_filename = str(os.path.join(temp_outdir, "metadata.json"))
     cmd = [
         "llvm-extract-loops",
         "-",
-        "--output-prefix",
-        prefix,
-        "--output-suffix",
-        suffix,
+        "-o",
+        "-",
+        "--metadata",
+        metadata_filename,
     ]
     logger.debug(" ".join(cmd))
     with subprocess.Popen(
@@ -87,39 +98,20 @@ def process_module_in_dir(module, language, idx, temp_outdir):
             logger.debug(outs.decode("utf-8"))
             logger.debug("errs")
             logger.debug(errs.decode("utf-8"))
-            return None
+            return ProcessResult(idx, None)
 
-    dfs = []
-    i = 0
-    while True:
-        try:
-            module_path = prefix + str(i) + suffix
-            metadata_path = module_path + ".json"
+    with open(metadata_filename, "r") as metadata_file:
+        data = json.load(metadata_file)
 
-            with open(module_path, "br") as module_file:
-                loop_module = module_file.read()
+    if data["num_loops"] == 0:
+        return ProcessResult(idx, [])
 
-            with open(metadata_path, "r") as metadata_file:
-                data = json.load(metadata_file)
+    data["module"] = outs
 
-            data["language_in_compile"] = language
-            data["module_idx_in_compile"] = idx
-            data["module"] = loop_module
+    data["language_in_compile"] = language
+    data["module_idx_in_compile"] = idx
 
-            size_estimate += len(loop_module)
-
-            dfs.append(data)
-
-        except OSError as e:
-            logger.debug(e)
-            break
-        i += 1
-
-    logger.debug(f"len {len(dfs)}")
-    if len(dfs) == 0:
-        return None
-
-    return ProcessResult(idx, dfs)
+    return ProcessResult(idx, [data])
 
 
 if __name__ == "__main__":
