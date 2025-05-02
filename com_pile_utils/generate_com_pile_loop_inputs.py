@@ -6,21 +6,9 @@
 
 import random
 import argparse
-import tempfile
-import re
-import os
-import json
-import subprocess
-import dataclasses
-import collections
-import sys
-import stat
 import logging
-import glob
-import pandas
 import ray
 
-from datasets import load_dataset
 from typing import Dict, Tuple, BinaryIO, Union, List, Optional, Iterable
 
 from input_gen.utils import (
@@ -30,8 +18,8 @@ from input_gen.utils import (
     InputGenError,
     InputGenInstrumentationError,
 )
-from dataset_writer import DatasetWriter, ProcessResult
-from dataset_reader import DatasetReader
+from .dataset_writer import DatasetWriter, ProcessResult
+from .dataset_reader import DatasetReader
 
 logger = logging.getLogger(__name__)
 
@@ -112,33 +100,43 @@ def process_module(args, idx, data):
             compile_timeout=COMPILE_TIMEOUT,
         )
 
+        num_loops = data["num_loops"]
+        assert num_loops > 0
+
+        entries = []
+        for i in range(num_loops):
+            entries.append("__llvm_extracted_loop." + str(i))
+
         with InputGenGenerate(
             data["module"],
-            entries=["__llvm_extracted_loop"],
+            entries=entries,
             **common_args,
         ) as igg:
-            assert igg.get_num_entries() == 1
+            assert igg.get_num_entries() == num_loops
             data["module"] = igg.get_repl_mod()
 
             inputs = []
-            for int_min, int_max, num_inputs in INPUTGEN_STRATEGY:
-                # We do a separate igg.generate for each single input because we
-                # want different seeds for each one.
-                for i in range(num_inputs):
-                    # 0 to int32_t_max
-                    seed = random.randint(0, 2147483647)
-                    try:
-                        inputs += igg.generate(
-                            entry_no=0,
-                            num_inputs=1,
-                            first_input=i,
-                            timeout=INPUTGEN_TIMEOUT,
-                            int_min=int_min,
-                            int_max=int_max,
-                            seed=seed,
-                        )
-                    except InputGenError as e:
-                        logger.debug(e)
+            for i in range(num_loops):
+                entry_inputs = []
+                for int_min, int_max, num_inputs in INPUTGEN_STRATEGY:
+                    # We do a separate igg.generate for each single input because we
+                    # want different seeds for each one.
+                    for j in range(num_inputs):
+                        # 0 to int32_t_max
+                        seed = random.randint(0, 2147483647)
+                        try:
+                            entry_inputs += igg.generate(
+                                entry_no=i,
+                                num_inputs=1,
+                                first_input=j,
+                                timeout=INPUTGEN_TIMEOUT,
+                                int_min=int_min,
+                                int_max=int_max,
+                                seed=seed,
+                            )
+                        except InputGenError as e:
+                            logger.debug(e)
+                inputs.append(entry_inputs)
             data["inputs"] = inputs
 
         # TODO we want to gather some info on the inputs such as size, est. runtime,
