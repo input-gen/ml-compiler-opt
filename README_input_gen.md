@@ -50,7 +50,7 @@ python3 input_gen.py --module input_module.ll (--entry-function=ENTRY_FUNCTION |
 ### Generating ComPileLoop from ComPile
 
 ``` shell
-python3 generate_com_pile_loop.py --dataset ~/datasets/ComPile/ --output-dataset ./ComPileLoop
+PYTHONPATH=$PYTHONPATH:. python3 -m com_pile_utils.generate_com_pile_loop --dataset ~/datasets/ComPile --output-dataset ~/datasets/ComPileLoop.sqlite3
 ```
 
 USR1 can be sent to get a status report, USR2 can be sent to abort and write out
