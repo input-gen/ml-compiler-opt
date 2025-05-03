@@ -33,7 +33,7 @@ VER = "1"
 @dataclasses.dataclass(frozen=True)
 class ProcessResult:
     i: int
-    data: Optional[List[bytes]]
+    data: Optional[List[dict]]
 
 
 class VersionMismatch(Exception):
@@ -50,8 +50,18 @@ DATA_TABLE = "data"
 PROCESSED_TABLE = "processed"
 
 ID_FIELD = "id"
-DATA_FIELD = "data"
 SUCCESS_FIELD = "success"
+
+
+def infer_sqlite_type(value):
+    if isinstance(value, int):
+        return "INTEGER"
+    elif isinstance(value, str):
+        return "TEXT"
+    elif isinstance(value, bytes):
+        return "BLOB"
+    else:
+        return None
 
 
 class DatasetWriter:
@@ -64,6 +74,9 @@ class DatasetWriter:
         self.should_break_immediately = False
 
         self.i = 0
+
+        self.cols_added = False
+        self.data_schema = None
 
         signal.signal(signal.SIGUSR2, self.receive)
         signal.signal(signal.SIGUSR1, self.receive)
@@ -79,16 +92,16 @@ class DatasetWriter:
         if signum == signal.SIGUSR1:
             print(f"Progress: module {self.i}")
         elif signum == signal.SIGUSR2:
-            print("Will break")
+            print("Will break after all pending are done.")
             self.should_break = True
         elif signum == signal.SIGINT:
-            print("Will break immediately")
+            print("Will break immediately, please wait.")
             self.should_break = True
             self.should_break_immediately = True
 
     def setup_database(self):
         self.cur = self.con.cursor()
-        self.cur.execute(f"CREATE TABLE IF NOT EXISTS {DATA_TABLE}({ID_FIELD}, {DATA_FIELD})")
+        self.cur.execute(f"CREATE TABLE IF NOT EXISTS {DATA_TABLE}({ID_FIELD})")
         self.cur.execute(f"CREATE TABLE IF NOT EXISTS {PROCESSED_TABLE}({ID_FIELD}, {SUCCESS_FIELD})")
         self.con.commit()
 
@@ -102,12 +115,51 @@ class DatasetWriter:
             f"INSERT INTO {PROCESSED_TABLE} ({ID_FIELD}, {SUCCESS_FIELD}) VALUES(?, ?)", (idx, False)
         )
 
-    def add_success(self, idx, df):
+    def ensure_cols(self, sample_dict):
+        self.data_schema = set(sample_dict.keys())
+
+        cursor = self.con.cursor()
+        cursor.execute(f"PRAGMA table_info({DATA_TABLE})")
+        existing_columns = {row[1] for row in cursor.fetchall()}  # set of column names
+        missing = set(sample_dict.keys()) - existing_columns
+
+        for column in missing:
+            value = sample_dict[column]
+            col_type = infer_sqlite_type(value)
+            assert col_type is not None
+            sql = f"ALTER TABLE {DATA_TABLE} ADD COLUMN {column} {col_type}"
+            cursor.execute(sql)
+
+        self.con.commit()
+
+    def add_success(self, idx, dicts):
         try:
-            self.cur.executemany(
-                f"INSERT INTO {DATA_TABLE} ({ID_FIELD}, {DATA_FIELD}) VALUES(?, ?)",
-                [(idx, pickle.dumps(d)) for d in df],
-            )
+            if len(dicts) > 0:
+                new_dicts = []
+                for d in dicts:
+                    assert ID_FIELD not in d.keys()
+                    new_d = {}
+                    new_d[ID_FIELD] = idx
+                    for k, v in d.items():
+                        if infer_sqlite_type(v) is None:
+                            new_d["__pickled_" + k] = pickle.dumps(v)
+                        else:
+                            new_d[k] = v
+                    new_dicts.append(new_d)
+                dicts = new_dicts
+
+                if not self.cols_added:
+                    self.ensure_cols(dicts[0])
+                    self.cols_added = True
+
+                for d in dicts:
+                    assert self.data_schema == d.keys()
+
+                columns = dicts[0].keys()
+                column_names = ", ".join(columns)
+                placeholders = ", ".join(f":{col}" for col in columns)
+                sql = f"INSERT INTO {DATA_TABLE} ({column_names}) VALUES ({placeholders})"
+                self.cur.executemany(sql, dicts)
         except (sqlite3.DataError, OverflowError) as e:
             logger.error(f"During processing of idx {idx} encountered")
             logger.error(e)

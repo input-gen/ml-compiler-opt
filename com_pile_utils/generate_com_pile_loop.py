@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 def parse_args_and_run():
     parser = argparse.ArgumentParser(description="A tool for making a LLVM IR loop dataset")
 
-    #parser.add_argument("--language", default="c")
+    # parser.add_argument("--language", default="c")
 
     parser.add_argument("--save-temps", action="store_true", default=False)
     parser.add_argument("--temp-dir", default=None)
@@ -69,7 +69,7 @@ def process_module_impl(module, language, idx, args):
     try:
         outdir = tempfile.mkdtemp(dir=args.temp_dir)
         if args.save_temps:
-            with open(os.path.join(outdir, 'module.bc'), 'wb') as f:
+            with open(os.path.join(outdir, "module.bc"), "wb") as f:
                 f.write(module)
         return process_module_in_dir(module, language, idx, outdir)
     finally:
@@ -107,9 +107,7 @@ def process_module_in_dir(module, language, idx, temp_outdir):
         return ProcessResult(idx, [])
 
     data["module"] = outs
-
     data["language_in_compile"] = language
-    data["module_idx_in_compile"] = idx
 
     return ProcessResult(idx, [data])
 

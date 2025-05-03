@@ -5,6 +5,7 @@ import pickle
 import os
 
 from datasets import load_dataset
+from . import dataset_writer
 
 
 def iter_dataset(ds):
@@ -15,21 +16,28 @@ def iter_dataset(ds):
 
 
 def iter_sqlite(ds):
-    for i, d in ds:
-        yield (i, pickle.loads(d))
+    for d in ds:
+        new_d = {}
+        for k, v in dict(d).items():
+            if k.startswith("__pickled"):
+                new_d[k.removeprefix("__pickled")] = v
+            else:
+                new_d[k] = v
+        yield (new_d["id"], new_d)
 
 
 class SqliteDatasetReader:
     def __init__(self, path):
         self.ty = "sqlite3"
         self.con = sqlite3.connect(path)
+        self.con.row_factory = sqlite3.Row
         self.cur = self.con.cursor()
 
     def cleanup(self):
         self.con.close()
 
     def get_iter(self):
-        return iter_sqlite(self.cur.execute("SELECT rowid, data FROM data"))
+        return iter_sqlite(self.cur.execute("SELECT * FROM data"))
 
     def get_iter_unprocessed(self):
         return iter_sqlite(

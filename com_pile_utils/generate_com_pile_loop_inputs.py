@@ -145,13 +145,19 @@ def process_module(args, idx, data):
             **common_args,
         ) as igr:
             replays = []
-            for inpt in inputs:
-                res = next(igr.replay_input(inpt.data, entry_no=0, num=1, timeout=INPUTGEN_TIMEOUT))
-                replays.append(res)
+            for entry_inputs in inputs:
+                entry_replays = []
+                for inpt in entry_inputs:
+                    res = next(
+                        igr.replay_input(inpt.data, entry_no=0, num=1, timeout=INPUTGEN_TIMEOUT)
+                    )
+                    replays.append(res)
+                replays.append(entry_replays)
         data["replays"] = replays
 
         logger.debug(data)
 
+        del data["id"]
         return ProcessResult(idx, [data])
 
     except InputGenInstrumentationError as e:
