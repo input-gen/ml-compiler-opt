@@ -13,21 +13,13 @@ import dataclasses
 import logging
 import sqlite3
 import pickle
-
-# from absl import flags
+import tempfile
 
 from typing import Optional, List
 from pyarrow import parquet
 from datasets import load_dataset
 
-# flags.DEFINE_string("dataset", None)
-# FLAGS = flags.FLAGS
-
 logger = logging.getLogger(__name__)
-
-# 100MB
-PARQUET_SIZE = 100 * 1000 * 1000
-VER = "1"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -46,11 +38,17 @@ class CorruptMetadata(Exception):
     pass
 
 
+PICKLED_COLUMN_PREFIX = "__pickled_"
+
 DATA_TABLE = "data"
 PROCESSED_TABLE = "processed"
 
 ID_FIELD = "id"
 SUCCESS_FIELD = "success"
+
+# Blob size limit. After this limit, a path will be stored in the table
+# and the blob will be stored on disk.
+BLOB_SIZE_LIMIT = 100 * 1000  # 100 KB
 
 
 def infer_sqlite_type(value):
@@ -110,6 +108,9 @@ class DatasetWriter:
         }
         logger.debug(f"Already processed {self.already_processed}")
 
+        self.blob_storage_path = self.output_dataset + ".storage"
+        os.makedirs(self.blob_storage_path, exist_ok=True)
+
     def add_failure(self, idx):
         self.cur.execute(
             f"INSERT INTO {PROCESSED_TABLE} ({ID_FIELD}, {SUCCESS_FIELD}) VALUES(?, ?)", (idx, False)
@@ -132,6 +133,11 @@ class DatasetWriter:
 
         self.con.commit()
 
+    def write_blob_to_file(self, blob):
+        with tempfile.NamedTemporaryFile(mode="wb", dir=self.blob_storage_path, delete=False) as tmp:
+            tmp.write(blob)
+            return tmp.name
+
     def add_success(self, idx, dicts):
         try:
             if len(dicts) > 0:
@@ -141,10 +147,28 @@ class DatasetWriter:
                     new_d = {}
                     new_d[ID_FIELD] = idx
                     for k, v in d.items():
-                        if infer_sqlite_type(v) is None:
-                            new_d["__pickled_" + k] = pickle.dumps(v)
+                        ty = infer_sqlite_type(v)
+                        if ty is None:
+                            new_k = PICKLED_COLUMN_PREFIX + k
+                            new_v = pickle.dumps(v)
+                            ty = infer_sqlite_type(new_v)
+                            assert ty == "BLOB"
                         else:
-                            new_d[k] = v
+                            new_k = k
+                            new_v = v
+                        if ty == "BLOB":
+                            assert isinstance(new_v, bytes)
+                            size = len(new_v)
+                            if size <= BLOB_SIZE_LIMIT:
+                                # TODO we create an entire copy of the blob this
+                                # way and this can be avoided using
+                                # self.con.blobopen to write it out but it is
+                                # annoying
+                                new_v = b"\x00" + new_v
+                            else:
+                                name = self.write_blob_to_file(new_v)
+                                new_v = b"\x01" + name.encode("utf-8")
+                        new_d[new_k] = new_v
                     new_dicts.append(new_d)
                 dicts = new_dicts
 

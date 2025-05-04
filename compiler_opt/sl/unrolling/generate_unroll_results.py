@@ -41,21 +41,11 @@ def parse_args_and_run():
     main(args)
 
 
-PHYSICAL_CORE_RESOURCE = "physical_core"
-
-
 def main(args):
     if args.debug:
         logging.basicConfig(level=logging.DEBUG)
     else:
         logging.basicConfig(level=logging.INFO)
-
-    # TODO Currently this is set up to only work with on a single node.
-    # physical_cores = psutil.cpu_count(logical=False)
-    # os.sched_setaffinity(0, [CPUS[physical_cores - 1]])
-    # context = ray.init(resources={PHYSICAL_CORE_RESOURCE: physical_cores - 1})
-    context = ray.init()
-    print(f"Dashboard at {context.dashboard_url}")
 
     with DatasetReader(args.dataset) as dr:
         if args.one is None:
@@ -76,14 +66,6 @@ def get_physical_cores():
         if core not in mapping:
             mapping[core] = cpu
     return mapping
-
-
-CPUS = get_physical_cores()
-HOSTNAME = socket.gethostname()
-print(f"On host {HOSTNAME} cpus {CPUS}")
-os.sched_setaffinity(0, [CPUS[len(CPUS) - 1]])
-
-assert set(CPUS.keys()) == set(range(len(CPUS)))
 
 
 @ray.remote
@@ -128,6 +110,7 @@ def process_module(args, idx, data):
         "advice_spec": advice_spec,
         "decision_results": decision_results,
         "inputs": inputs,
+        "num_loops": data["num_loops"],
     }
 
     return [d]

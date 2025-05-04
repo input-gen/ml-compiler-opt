@@ -31,3 +31,22 @@ cd ${TFLITE_PATH}
 #+begin_src bash
 ADDITIONAL_FLAGS="-C /scr/ivan/src/tflite/tflite.cmake -DCMAKE_IGNORE_PATH=/usr/include/eigen3;/usr/bin/python3.12 -DPython3_ROOT=/scr/ivan/opt/python-3.11.0-shared/"
 #+end_src
+
+
+* features
+- will this vectorize if unrolled?
+- access strides
+- float/int instruction counts
+- inner branches
+- calls
+- inner loops
+- outer loops
+- is finite / is known ssa / is unknown
+- existing vector instructions
+- count number of instructions of each operation
+- get features from vectorization report reasons it couldnt etc
+- num loop carried bytes
+- cast instructions -> free instructions (trunc?, cast to/from ptr)
+- aliasing sets read/write
+
+

@@ -15,14 +15,22 @@ def iter_dataset(ds):
         i += 1
 
 
-def iter_sqlite(ds):
+def iter_sqlite(ds, reader):
     for d in ds:
         new_d = {}
         for k, v in dict(d).items():
-            if k.startswith("__pickled"):
-                new_d[k.removeprefix("__pickled")] = v
+            if isinstance(v, bytes):
+                if v[0] == 0:
+                    new_v = v[1:]
+                else:
+                    new_v = reader.load_blob_from_file(v[1:].decode("utf-8"))
             else:
-                new_d[k] = v
+                new_v = v
+            if k.startswith(dataset_writer.PICKLED_COLUMN_PREFIX):
+                new_k = k.removeprefix(dataset_writer.PICKLED_COLUMN_PREFIX)
+            else:
+                new_k = k
+            new_d[new_k] = new_v
         yield (new_d["id"], new_d)
 
 
@@ -32,25 +40,17 @@ class SqliteDatasetReader:
         self.con = sqlite3.connect(path)
         self.con.row_factory = sqlite3.Row
         self.cur = self.con.cursor()
+        self.blob_storage_path = path + ".storage"
 
     def cleanup(self):
         self.con.close()
 
     def get_iter(self):
-        return iter_sqlite(self.cur.execute("SELECT * FROM data"))
+        return iter_sqlite(self.cur.execute("SELECT * FROM data"), self)
 
-    def get_iter_unprocessed(self):
-        return iter_sqlite(
-            self.cur.execute(
-                """
-            SELECT rowid, data
-            FROM data WHERE id NOT IN (
-              SELECT id
-              FROM processed
-            )
-            """
-            )
-        )
+    def load_blob_from_file(self, name):
+        with open(os.path.join(self.blob_storage_path, name), "rb") as f:
+            return f.read()
 
     def get_one_iter(self, one):
         return iter_sqlite(self.cur.execute("SELECT rowid, data FROM data WHERE rowid=?", (one,)))
@@ -64,6 +64,9 @@ class DatasetsDatasetReader:
     def cleanup(self): ...
 
     def get_iter(self):
+        return iter_dataset(self.ds)
+
+    def get_iter_unprocessed(self):
         return iter_dataset(self.ds)
 
     def get_one_iter(self, one):

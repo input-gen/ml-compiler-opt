@@ -50,7 +50,7 @@ python3 input_gen.py --module input_module.ll (--entry-function=ENTRY_FUNCTION |
 ### Generating ComPileLoop from ComPile
 
 ``` shell
-PYTHONPATH=$PYTHONPATH:. python3 -m com_pile_utils.generate_com_pile_loop --dataset ~/datasets/ComPile --output-dataset ~/datasets/ComPileLoop.sqlite3
+PYTHONPATH=$PYTHONPATH:. python3 -m com_pile_utils.generate_com_pile_loop --dataset ~/datasets/ComPile/ --output-dataset ~/datasets/ComPileLoop.sqlite3
 ```
 
 USR1 can be sent to get a status report, USR2 can be sent to abort and write out
@@ -59,7 +59,7 @@ the current pending database file.
 ### Generating ComPileLoop+Inputs from ComPileLoop
 
 ``` shell
-python3 generate_com_pile_loop_inputs.py --dataset ~/datasets/ComPileLoop/ --output-dataset ./ComPileLoopInputs/
+PYTHONPATH=$PYTHONPATH:. python3 -m com_pile_utils.generate_com_pile_loop_inputs --dataset ~/datasets/ComPileLoop.sqlite3 --output-dataset ~/datasets/ComPileLoopInputs.sqlite3
 ```
 
 ### Demo of how to process ComPileLoop
