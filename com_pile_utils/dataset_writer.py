@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import glob
+import time
 import re
 import ray
 import argparse
@@ -199,6 +200,12 @@ class DatasetWriter:
         ray_wait_timeout = 1.0
         worklist = []
 
+        num_finished_success = 0
+        num_finished_fail = 0
+        start_time = time.time()
+        time_status_printed = 0
+        STATUS_REFRESH_TIME = 3
+
         while True:
             finished, worklist = ray.wait(worklist, timeout=ray_wait_timeout)
 
@@ -217,8 +224,10 @@ class DatasetWriter:
             for res in ray.get(finished):
                 if res.data is None:
                     self.add_failure(res.i)
+                    num_finished_fail += 1
                 else:
                     self.add_success(res.i, res.data)
+                    num_finished_success += 1
             self.con.commit()
 
             if self.should_break_immediately:
@@ -228,6 +237,19 @@ class DatasetWriter:
 
             if len(worklist) == 0:
                 break
+
+            cur_time = time.time() - start_time
+            if cur_time - time_status_printed > STATUS_REFRESH_TIME:
+                print("\r\033[K", end="", flush=True)
+                print(f"Progress: ", end="", flush=True)
+                print(f"succeeded({num_finished_success} r) ", end="", flush=True)
+                print(f"failed({num_finished_fail} r) ", end="", flush=True)
+                print(f"throughput ", end="", flush=True)
+                print(f"succeeded({num_finished_success / cur_time} r/s) ", end="", flush=True)
+                print(f"failed({num_finished_fail / cur_time} r/s) ", end="", flush=True)
+                time_status_printed = cur_time
+
+        print()
 
 
 def parse_args_and_run():
