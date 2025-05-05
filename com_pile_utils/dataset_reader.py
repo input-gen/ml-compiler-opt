@@ -54,7 +54,7 @@ class SqliteDatasetReader:
             return f.read()
 
     def get_one_iter(self, one):
-        return iter_sqlite(self.cur.execute("SELECT * FROM data WHERE rowid=?", (one,)))
+        return iter_sqlite(self.cur.execute("SELECT * FROM data WHERE rowid=?", (one,)), self)
 
 
 class DatasetsDatasetReader:
