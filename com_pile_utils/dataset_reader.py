@@ -28,6 +28,7 @@ def iter_sqlite(ds, reader):
                 new_v = v
             if k.startswith(dataset_writer.PICKLED_COLUMN_PREFIX):
                 new_k = k.removeprefix(dataset_writer.PICKLED_COLUMN_PREFIX)
+                new_v = pickle.loads(new_v)
             else:
                 new_k = k
             new_d[new_k] = new_v
@@ -53,7 +54,7 @@ class SqliteDatasetReader:
             return f.read()
 
     def get_one_iter(self, one):
-        return iter_sqlite(self.cur.execute("SELECT rowid, data FROM data WHERE rowid=?", (one,)))
+        return iter_sqlite(self.cur.execute("SELECT * FROM data WHERE rowid=?", (one,)))
 
 
 class DatasetsDatasetReader:
@@ -64,9 +65,6 @@ class DatasetsDatasetReader:
     def cleanup(self): ...
 
     def get_iter(self):
-        return iter_dataset(self.ds)
-
-    def get_iter_unprocessed(self):
         return iter_dataset(self.ds)
 
     def get_one_iter(self, one):
