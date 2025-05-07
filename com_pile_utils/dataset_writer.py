@@ -245,8 +245,8 @@ class DatasetWriter:
                 print(f"succeeded({num_finished_success} r) ", end="", flush=True)
                 print(f"failed({num_finished_fail} r) ", end="", flush=True)
                 print(f"throughput ", end="", flush=True)
-                print(f"succeeded({num_finished_success / cur_time} r/s) ", end="", flush=True)
-                print(f"failed({num_finished_fail / cur_time} r/s) ", end="", flush=True)
+                print(f"succeeded({num_finished_success / cur_time:.2f} r/s) ", end="", flush=True)
+                print(f"failed({num_finished_fail / cur_time:.2f} r/s) ", end="", flush=True)
                 time_status_printed = cur_time
 
         print()

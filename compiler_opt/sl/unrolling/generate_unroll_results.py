@@ -78,12 +78,18 @@ def process_module_wrapper(args, i, data):
 
 
 def process_module(args, idx, data):
+    if args.save_temps:
+        with tempfile.NamedTemporaryFile(mode="wb", delete=False) as tmp:
+            with open(tmp.name, "wb") as f:
+                f.write(data["module"])
+            logger.debug(f"Wrote tmp module to {tmp.name}")
     dump_llvm = args.dump_llvm
     inputs = data["inputs"]
     if len(inputs) == 0:
         logger.debug("No inputs")
         return None
-    if all([r is None for r in data["replays"]]):
+    # Let's allow invalid? replays just in case.
+    if False and all([r is None for r in data["replays"]]):
         logger.debug("No valid replays")
         return None
 
@@ -99,7 +105,7 @@ def process_module(args, idx, data):
             uch.get_unroll_decision_results(data["module"], process_and_args, tmpdir)
         )
 
-    if len(decision_results) is None:
+    if len(decision_results) == 0:
         return None
 
     features_spec = uch.get_features_spec()
@@ -110,8 +116,12 @@ def process_module(args, idx, data):
         "advice_spec": advice_spec,
         "decision_results": decision_results,
         "inputs": inputs,
+        "replays": data["replays"],
         "num_loops": data["num_loops"],
     }
+
+    logger.debug("Got unroll result")
+    logger.debug(d)
 
     return [d]
 

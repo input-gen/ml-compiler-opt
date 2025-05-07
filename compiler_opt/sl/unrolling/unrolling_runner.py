@@ -283,11 +283,12 @@ class UnrollCompilerHost:
         os.mkfifo(self.to_compiler, 0o666)
         os.mkfifo(self.from_compiler, 0o666)
 
+        compiler_proc = None
         try:
             logger.debug(f"Launching compiler {' '.join(self.process_and_args)}")
             compiler_proc = subprocess.Popen(
                 self.process_and_args,
-                stderr=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL if not self.debug else subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stdin=subprocess.PIPE,
             )
@@ -411,8 +412,9 @@ class UnrollCompilerHost:
 
             outs, errs = compiler_proc.communicate()
             outs = output_module + outs
-            logger.debug("Errs")
-            # logger.debug(errs.decode("utf-8"))
+            if self.debug:
+                logger.debug("Errs")
+                logger.debug(errs.decode("utf-8"))
             logger.debug(f"Outs size {len(outs)}")
             status = compiler_proc.wait()
             logger.debug(f"Status {status}")
@@ -429,7 +431,8 @@ class UnrollCompilerHost:
                 num_decisions=cur_decision,
             )
         finally:
-            compiler_proc.kill()
+            if compiler_proc is not None:
+                compiler_proc.kill()
 
 
 @gin.configurable(module="runners")
@@ -605,7 +608,7 @@ def main(args):
         with tempfile.TemporaryDirectory() as tmpdir:
             mod = f.read()
             uch = UnrollCompilerHost(args.emit_assembly, args.debug)
-            decision_results = uch.get_unroll_decision_results(module, process_and_args, tmpdir)
+            decision_results = uch.get_unroll_decision_results(mod, process_and_args, tmpdir)
 
             for uds in generate_samples(decision_results, [], dict()):
                 logger.info(f"Obtained sample {uds}")
