@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import pandas
+import re
 import psutil
 import argparse
 import tempfile
@@ -10,23 +11,21 @@ import logging
 import subprocess
 import ray
 import dataclasses
-from datasets import load_dataset
 import socket
-
+import numpy as np
+from datasets import load_dataset
+from typing import Dict, Tuple, BinaryIO, Union, List, Optional, Iterable
 
 from input_gen.utils import Input, InputGenError
 from com_pile_utils.dataset_writer import DatasetWriter, ProcessResult
 from com_pile_utils.dataset_reader import DatasetReader
 
 from . import unrolling_runner
+from .unrolling_runner import UnrollDecisionResult, UnrollDecision
+from .unroll_model import ADVICE_TENSOR_LEN, UNROLL_FACTOR_OFFSET, MAX_UNROLL_FACTOR
+from input_gen.utils import InputGenReplay, Input
 
 logger = logging.getLogger(__name__)
-
-
-@dataclasses.dataclass(frozen=True)
-class UnrollDecisionRuntime:
-    factor: int
-    runtime: Optional[List[int]]
 
 
 def parse_args_and_run():
@@ -58,15 +57,15 @@ def main(args):
     else:
         logging.basicConfig(level=logging.INFO)
 
-    # TODO Currently this is set up to only work with on a single node.
-    # physical_cores = psutil.cpu_count(logical=False)
-    # os.sched_setaffinity(0, [CPUS[physical_cores - 1]])
-    # context = ray.init(resources={PHYSICAL_CORE_RESOURCE: physical_cores - 1})
-    context = ray.init()
-    print(f"Dashboard at {context.dashboard_url}")
-
     with DatasetReader(args.dataset) as dr:
         if args.one is None:
+            # TODO Currently this is set up to only work with on a single node.
+            # physical_cores = psutil.cpu_count(logical=False)
+            # os.sched_setaffinity(0, [CPUS[physical_cores - 1]])
+            # context = ray.init(resources={PHYSICAL_CORE_RESOURCE: physical_cores - 1})
+            context = ray.init()
+            print(f"Dashboard at {context.dashboard_url}")
+
             with DatasetWriter(args.output_dataset) as dw:
                 dw.process(dr.get_iter(), process_module_wrapper, args)
         else:
@@ -94,25 +93,35 @@ os.sched_setaffinity(0, [CPUS[len(CPUS) - 1]])
 assert set(CPUS.keys()) == set(range(len(CPUS)))
 
 
-@ray.remote(num_cpus=0, resources={PHYSICAL_CORE_RESOURCE: 1})
-def benchmark_module(args, i, data):
-    decision_results = data["decsion_results"]
-    inputs = data["inputs"]
+@dataclasses.dataclass(frozen=True)
+class UnrollDecisionRuntime:
+    factor: int
+    runtime: Optional[List[int]]
 
+
+@ray.remote(num_cpus=0, resources={PHYSICAL_CORE_RESOURCE: 1})
+def process_module_wrapper(args, i, data):
     hostname = socket.gethostname()
     print(f"HOSTNAME {HOSTNAME} hostname {hostname} cpus {CPUS}")
     core_id = ray.get_runtime_context().worker.core_worker.resource_ids()[PHYSICAL_CORE_RESOURCE][0][0]
     assert core_id < len(CPUS)
     os.sched_setaffinity(0, [CPUS[core_id]])
 
+    return process_module(args, i, data)
+
+def process_module(args, i, data):
+    decision_results = data["decision_results"]
+    inputs = data["inputs"]
+
     def to_dict(**kwargs):
         return kwargs
 
     COMPILE_TIMEOUT = 2
+    clang_flags = ["./compiler_opt/sl/unrolling/rts/unrolling_profiler.o", "-lpfm"]
     replay_options = to_dict(
         working_dir=None,
         save_temps=args.save_temps,
-        mclang=args.mclang,
+        mclang=args.mclang + clang_flags,
         mllvm=args.mllvm,
         temp_dir=args.temp_dir,
         compile_timeout=COMPILE_TIMEOUT,
@@ -120,7 +129,7 @@ def benchmark_module(args, i, data):
 
     try:
         samples = list(
-            unrolling_runner.generate_samples(decision_results, inputs, replay_options, raw=True)
+            generate_samples(decision_results, inputs, replay_options, raw=True)
         )
     except InputGenError as e:
         return ProcessResult(i, None)
@@ -139,6 +148,75 @@ def benchmark_module(args, i, data):
     }
     return ProcessResult(i, [d])
 
+def adaptive_benchmark(iterator,
+                       initial_samples=5,
+                       max_initial_samples=20,
+                       max_samples=100,
+                       confidence=0.95,
+                       relative_ci_threshold=0.05):
+    """
+    Adaptive benchmarking loop to estimate mean runtime with confidence.
+
+    Parameters:
+        iterator: An iterator yielding runtime samples.
+        initial_samples: Number of initial samples to take.
+        max_initial_samples: Max number of tries to get initial samples.
+        max_samples: Max number of samples to avoid infinite loop.
+        confidence: Desired confidence level (e.g., 0.95 for 95% CI).
+        relative_ci_threshold: Target relative CI width (e.g., 0.05 means CI width < 5% of mean).
+
+    Returns:
+        mean_estimate, ci_half_width, num_samples
+    """
+
+    logger.debug("Starting adaptive benchmarking")
+
+    samples = np.array([])
+
+    n = 0
+    while len(samples) < initial_samples and n < max_initial_samples:
+        n += 1
+        new_sample = next(iterator)
+        if new_sample is not None:
+            if new_sample == 0:
+                logger.debug(f"Got zero")
+                return None
+            np.append(samples, new_sample)
+
+    if len(samples) < initial_samples:
+        logger.debug(f"Too many replay failures")
+        return None
+
+    while n < max_samples:
+        sample_mean = np.mean(samples)
+        sample_std = np.std(samples, ddof=1)  # sample std (unbiased)
+
+        # t critical value
+        alpha = 1 - confidence
+        t_crit = stats.t.ppf(1 - alpha/2, df=n-1)
+
+        margin_error = t_crit * (sample_std / np.sqrt(n))
+        relative_ci_width = (2 * margin_error) / sample_mean
+
+        # Check stopping criterion
+        if relative_ci_width < relative_ci_threshold:
+            logger.debug(f"Converged: mean {sample_mean}, std {sample_std}")
+            return sample_mean
+
+        # Get another sample
+        new_sample = None
+        while new_sample is None and n < max_samples:
+            new_sample = next(iterator)
+            n += 1
+        if new_sample is not None:
+            np.append(samples, new_sample)
+
+    logger.debug(f"Could not converge: mean {sample_mean}, std {sample_std}")
+    return None
+
+    # final_mean = np.mean(samples)
+    # final_margin_error = stats.t.ppf(1 - (1 - confidence)/2, df=n-1) * (np.std(samples, ddof=1) / np.sqrt(n))
+    # return final_mean, final_margin_error, n
 
 def get_speedup_factor(base: np.array, opt: np.array):
     # This will get element wise speedup factors for all inputs where either
@@ -186,9 +264,56 @@ def get_ud_sample_from_raw(x, base_runtime, factor_runtimes):
 
         return (x, y)
 
+def get_rt_from_replay_res(res):
+    logger.debug(f"Res {res}")
+    re_match = re.search("MLGO_LOOP_UNROLL_TIMER ([0-9]+)", res.outs.decode("utf-8"))
+    if re_match is None:
+        logger.debug(f"No match")
+        return None
+    else:
+        f = int(re_match.group(1))
+        logger.debug(f"Match {f}")
+        return f
 
 def generate_samples(decision_results, inputs, replay_options, raw=False):
+    def get_module_runtime(module, inpt):
+        with InputGenReplay(module, **replay_options) as igr:
+            num = None
+            timeout = 1
+            rts = []
+            for res in igr.replay_input(inpt.data, inpt.entry_no, num, timeout=timeout):
+                logger.debug(f"Res {res}")
+                re_match = re.search("MLGO_LOOP_UNROLL_TIMER ([0-9]+)", res.outs.decode("utf-8"))
+                if re_match is None:
+                    logger.debug(f"No match")
+                    rts.append(None)
+                else:
+                    f = int(re_match.group(1))
+                    logger.debug(f"Match {f}")
+                    rts.append(f)
+            assert len(rts) == 1
+            yield rts[0]
+
     def get_module_runtimes(module):
+        rts = []
+        num = None
+        timeout = 1
+        with InputGenReplay(module, **replay_options) as igr:
+            logger.debug(f"Starting replaying {len(inputs)} entries")
+            for entry_no, entry_inputs in enumerate(inputs):
+                logger.debug(f"Starting replaying for entry {entry_no} with {len(entry_inputs)} inputs")
+                entry_rts = np.empty(len(entry_inputs))
+                for input_no, inpt in enumerate(entry_inputs):
+                    it = igr.replay_input(inpt.data, inpt.entry_no, num, timeout=timeout)
+                    res = adaptive_benchmark(map(get_rt_from_replay_res, it))
+                    if res is None:
+                        entry_rts[input_no] = np.nan
+                    else:
+                        entry_rts[input_no] = res
+                rts.append(entry_rts)
+        return rts
+
+    def get_module_runtimes_bak(module):
         with InputGenReplay(module, **replay_options) as igr:
             for inpt in inputs:
                 num = 5
