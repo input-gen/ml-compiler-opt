@@ -23,6 +23,12 @@ from . import unrolling_runner
 logger = logging.getLogger(__name__)
 
 
+@dataclasses.dataclass(frozen=True)
+class UnrollDecisionRuntime:
+    factor: int
+    runtime: Optional[List[int]]
+
+
 def parse_args_and_run():
     parser = argparse.ArgumentParser(description="Reading ComPileLoop")
     parser.add_argument("--dataset", required=True)
@@ -132,6 +138,135 @@ def benchmark_module(args, i, data):
         "samples": samples,
     }
     return ProcessResult(i, [d])
+
+
+def get_speedup_factor(base: np.array, opt: np.array):
+    # This will get element wise speedup factors for all inputs where either
+    # succeeded
+    arr = base / opt
+    arr = arr[~np.isnan(arr)]  # remove NaNs
+    if arr.size == 0:
+        return None
+    geomean = np.exp(np.mean(np.log(arr)))
+    return geomean
+    # return gmean(arr)
+
+
+def rt_reduce(l):
+    arr = np.array(l, dtype=float)
+    arr = arr[~np.isnan(arr)]  # remove NaNs
+    if arr.size == 0:
+        return None
+    return np.median(arr)
+    # s = pd.Series(l).dropna()
+    # if len(s) == 0:
+    #     return None
+    # return s.median()
+
+
+def flatten(l):
+    return np.fromiter((rt_reduce(sl) for sl in l), dtype=float)
+
+
+def get_ud_sample_from_raw(x, base_runtime, factor_runtimes):
+    with np.errstate(divide="ignore", invalid="ignore"):
+        # Obtain speedup factors for all unroll factors.
+        # Encode failure to unroll as speedup of 0.0.
+        base_runtime = flatten(base_runtime)
+        y = [
+            get_speedup_factor(base_runtime, flatten(factor_runtime))
+            if factor_runtime is not None
+            else 0.0
+            for factor_runtime in factor_runtimes
+        ]
+
+        # If we did not manage to obtain a speedup we fail
+        if any(r is None for r in y):
+            return None
+
+        return (x, y)
+
+
+def generate_samples(decision_results, inputs, replay_options, raw=False):
+    def get_module_runtimes(module):
+        with InputGenReplay(module, **replay_options) as igr:
+            for inpt in inputs:
+                num = 5
+                timeout = 1
+                rts = []
+                for res in igr.replay_input(inpt.data, inpt.entry_no, num, timeout=timeout):
+                    logger.debug(f"Res {res}")
+                    re_match = re.search("MLGO_LOOP_UNROLL_TIMER ([0-9]+)", res.outs.decode("utf-8"))
+                    if re_match is None:
+                        logger.debug(f"No match")
+                        rts.append(None)
+                    else:
+                        f = int(re_match.group(1))
+                        logger.debug(f"Match {f}")
+                        rts.append(f)
+                yield rts
+
+    def get_udr_runtime(udr: UnrollDecisionResult):
+        if udr.action or udr.factor == 1:
+            return UnrollDecisionRuntime(udr.factor, list(get_module_runtimes(udr.module)))
+        else:
+            return UnrollDecisionRuntime(udr.factor, None)
+
+    def get_ud_sample(ud: UnrollDecision):
+        res = get_ud_raw_sample(ud)
+        if res is None:
+            return None
+        x, base_runtime, factor_runtimes = res
+        return get_ud_sample_from_raw(x, base_runtime, factor_runtimes)
+
+    def get_ud_raw_sample(ud: UnrollDecision):
+        x = ud.features
+        factor_runtimes = [None for _ in range(ADVICE_TENSOR_LEN)]
+        for udr in ud.results:
+            if udr.factor != 1:
+                udrt = get_udr_runtime(udr)
+                assert udrt.factor >= 2
+                factor_runtimes[udrt.factor - UNROLL_FACTOR_OFFSET] = udrt.runtime
+
+        logging.debug(f"Got factor_runtimes {factor_runtimes}")
+
+        # If none of the factors succeeded.
+        if all(factor_runtime is None for factor_runtime in factor_runtimes):
+            return None
+
+        # If we have any factor runtime to compare to, also get the base runtime
+        base_runtime = None
+        for udr in ud.results:
+            if udr.factor == 1:
+                udrt = get_udr_runtime(udr)
+                base_runtime = udrt.runtime
+                if base_runtime == None:
+                    return None
+
+        logging.debug(f"Got base_runtime {base_runtime}")
+
+        return x, base_runtime, factor_runtimes
+
+    def get_ud_raw_samples(uds: Iterable[UnrollDecision]):
+        for ud in uds:
+            sample = get_ud_raw_sample(ud)
+            if sample is not None:
+                yield sample
+            else:
+                logger.debug(f"Obtained invalid sample")
+
+    def get_ud_samples(uds: Iterable[UnrollDecision]):
+        for ud in uds:
+            sample = get_ud_sample(ud)
+            if sample is not None:
+                yield sample
+            else:
+                logger.debug(f"Obtained invalid sample")
+
+    if raw:
+        yield from get_ud_raw_samples(decision_results)
+    else:
+        yield from get_ud_samples(decision_results)
 
 
 if __name__ == "__main__":
