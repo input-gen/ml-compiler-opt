@@ -13,7 +13,7 @@ import ray
 import dataclasses
 import socket
 import numpy as np
-from datasets import load_dataset
+from scipy import stats
 from typing import Dict, Tuple, BinaryIO, Union, List, Optional, Iterable
 
 from input_gen.utils import Input, InputGenError
@@ -185,7 +185,8 @@ def adaptive_benchmark(
             if new_sample == 0:
                 logger.debug(f"Got zero")
                 return 0
-            np.append(samples, new_sample)
+            samples = np.append(samples, new_sample)
+            logger.debug(f"Obtained sample {new_sample}, len {len(samples)}")
 
     if len(samples) < initial_samples:
         logger.debug(f"Too many replay failures")
@@ -213,7 +214,7 @@ def adaptive_benchmark(
             new_sample = next(iterator)
             n += 1
         if new_sample is not None:
-            np.append(samples, new_sample)
+            samples = np.append(samples, new_sample)
 
     logger.debug(f"Could not converge: mean {sample_mean}, std {sample_std}")
     return None
@@ -313,6 +314,7 @@ def generate_samples(decision_results, inputs, replay_options, raw=False):
         return rts
 
     def get_udr_runtime(udr: UnrollDecisionResult, is_non_zero_runtime=None):
+        logger.debug(f"Getting runtime for udr action {udr.action}, factor {udr.factor}")
         if udr.action or udr.factor == 1:
             return UnrollDecisionRuntime(
                 udr.factor, get_module_runtimes(udr.module, is_non_zero_runtime)

@@ -70,14 +70,18 @@ def get_physical_cores():
 
 @ray.remote
 def process_module_wrapper(args, i, data):
-    res = process_module(args, i, data)
+    return process_module(args, i, data)
+
+
+def process_module(args, i, data):
+    res = process_module_impl(args, i, data)
     if res is None:
         return ProcessResult(i, None)
     else:
         return ProcessResult(i, res)
 
 
-def process_module(args, idx, data):
+def process_module_impl(args, idx, data):
     if args.save_temps:
         with tempfile.NamedTemporaryFile(mode="wb", delete=False) as tmp:
             with open(tmp.name, "wb") as f:

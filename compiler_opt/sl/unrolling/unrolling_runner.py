@@ -412,6 +412,8 @@ class UnrollCompilerHost:
             logger.debug(f"Outs size {len(outs)}")
             status = compiler_proc.wait()
             logger.debug(f"Status {status}")
+            if status != 0:
+                return None
 
             if self.emit_assembly:
                 outs = outs.decode("utf-8")
