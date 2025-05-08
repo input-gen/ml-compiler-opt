@@ -96,7 +96,7 @@ assert set(CPUS.keys()) == set(range(len(CPUS)))
 @dataclasses.dataclass(frozen=True)
 class UnrollDecisionRuntime:
     factor: int
-    runtime: Optional[List[int]]
+    runtime: Optional[np.array]
 
 
 @ray.remote(num_cpus=0, resources={PHYSICAL_CORE_RESOURCE: 1})
@@ -108,6 +108,7 @@ def process_module_wrapper(args, i, data):
     os.sched_setaffinity(0, [CPUS[core_id]])
 
     return process_module(args, i, data)
+
 
 def process_module(args, i, data):
     decision_results = data["decision_results"]
@@ -128,9 +129,7 @@ def process_module(args, i, data):
     )
 
     try:
-        samples = list(
-            generate_samples(decision_results, inputs, replay_options, raw=True)
-        )
+        samples = list(generate_samples(decision_results, inputs, replay_options, raw=True))
     except InputGenError as e:
         return ProcessResult(i, None)
 
@@ -141,6 +140,8 @@ def process_module(args, i, data):
         logger.debug(f"InputGenReplay failed: {e}")
         return ProcessResult(i, None)
 
+    logger.debug(f"Successfully generated {len(samples)} samples")
+
     d = {
         "features_spec": data["features_spec"],
         "advice_spec": data["advice_spec"],
@@ -148,12 +149,15 @@ def process_module(args, i, data):
     }
     return ProcessResult(i, [d])
 
-def adaptive_benchmark(iterator,
-                       initial_samples=5,
-                       max_initial_samples=20,
-                       max_samples=100,
-                       confidence=0.95,
-                       relative_ci_threshold=0.05):
+
+def adaptive_benchmark(
+    iterator,
+    initial_samples=5,
+    max_initial_samples=20,
+    max_samples=100,
+    confidence=0.95,
+    relative_ci_threshold=0.05,
+):
     """
     Adaptive benchmarking loop to estimate mean runtime with confidence.
 
@@ -171,7 +175,7 @@ def adaptive_benchmark(iterator,
 
     logger.debug("Starting adaptive benchmarking")
 
-    samples = np.array([])
+    samples = np.array([], dtype=float)
 
     n = 0
     while len(samples) < initial_samples and n < max_initial_samples:
@@ -180,7 +184,7 @@ def adaptive_benchmark(iterator,
         if new_sample is not None:
             if new_sample == 0:
                 logger.debug(f"Got zero")
-                return None
+                return 0
             np.append(samples, new_sample)
 
     if len(samples) < initial_samples:
@@ -193,7 +197,7 @@ def adaptive_benchmark(iterator,
 
         # t critical value
         alpha = 1 - confidence
-        t_crit = stats.t.ppf(1 - alpha/2, df=n-1)
+        t_crit = stats.t.ppf(1 - alpha / 2, df=n - 1)
 
         margin_error = t_crit * (sample_std / np.sqrt(n))
         relative_ci_width = (2 * margin_error) / sample_mean
@@ -217,6 +221,7 @@ def adaptive_benchmark(iterator,
     # final_mean = np.mean(samples)
     # final_margin_error = stats.t.ppf(1 - (1 - confidence)/2, df=n-1) * (np.std(samples, ddof=1) / np.sqrt(n))
     # return final_mean, final_margin_error, n
+
 
 def get_speedup_factor(base: np.array, opt: np.array):
     # This will get element wise speedup factors for all inputs where either
@@ -246,24 +251,6 @@ def flatten(l):
     return np.fromiter((rt_reduce(sl) for sl in l), dtype=float)
 
 
-def get_ud_sample_from_raw(x, base_runtime, factor_runtimes):
-    with np.errstate(divide="ignore", invalid="ignore"):
-        # Obtain speedup factors for all unroll factors.
-        # Encode failure to unroll as speedup of 0.0.
-        base_runtime = flatten(base_runtime)
-        y = [
-            get_speedup_factor(base_runtime, flatten(factor_runtime))
-            if factor_runtime is not None
-            else 0.0
-            for factor_runtime in factor_runtimes
-        ]
-
-        # If we did not manage to obtain a speedup we fail
-        if any(r is None for r in y):
-            return None
-
-        return (x, y)
-
 def get_rt_from_replay_res(res):
     logger.debug(f"Res {res}")
     re_match = re.search("MLGO_LOOP_UNROLL_TIMER ([0-9]+)", res.outs.decode("utf-8"))
@@ -275,65 +262,61 @@ def get_rt_from_replay_res(res):
         logger.debug(f"Match {f}")
         return f
 
-def generate_samples(decision_results, inputs, replay_options, raw=False):
-    def get_module_runtime(module, inpt):
-        with InputGenReplay(module, **replay_options) as igr:
-            num = None
-            timeout = 1
-            rts = []
-            for res in igr.replay_input(inpt.data, inpt.entry_no, num, timeout=timeout):
-                logger.debug(f"Res {res}")
-                re_match = re.search("MLGO_LOOP_UNROLL_TIMER ([0-9]+)", res.outs.decode("utf-8"))
-                if re_match is None:
-                    logger.debug(f"No match")
-                    rts.append(None)
-                else:
-                    f = int(re_match.group(1))
-                    logger.debug(f"Match {f}")
-                    rts.append(f)
-            assert len(rts) == 1
-            yield rts[0]
 
-    def get_module_runtimes(module):
-        rts = []
-        num = None
-        timeout = 1
+def get_ud_sample_from_raw(x, base_runtime, factor_runtimes):
+    with np.errstate(divide="ignore", invalid="ignore"):
+        # Obtain speedup factors for all unroll factors.
+        # Encode failure to unroll as speedup of 0.0.
+        y = [
+            get_speedup_factor(base_runtime, factor_runtime) if factor_runtime is not None else 0.0
+            for factor_runtime in factor_runtimes
+        ]
+
+        # If we did not manage to obtain a speedup we fail
+        if any(r is None for r in y):
+            return None
+
+        return (x, y)
+
+
+def generate_samples(decision_results, inputs, replay_options, raw=False):
+    def get_module_runtimes(module, is_non_zero_runtime=None):
+        NUM_REPLAYS = None
+        TIMEOUT = 1
+
+        num_inputs = 0
+        for entry_inputs in inputs:
+            num_inputs += len(entry_inputs)
+
+        rts = np.zeros(num_inputs, dtype=float)
+        i = 0
         with InputGenReplay(module, **replay_options) as igr:
             logger.debug(f"Starting replaying {len(inputs)} entries")
             for entry_no, entry_inputs in enumerate(inputs):
-                logger.debug(f"Starting replaying for entry {entry_no} with {len(entry_inputs)} inputs")
-                entry_rts = np.empty(len(entry_inputs))
+                logger.debug(
+                    f"Starting replaying for entry {entry_no} with {len(entry_inputs)} inputs"
+                )
                 for input_no, inpt in enumerate(entry_inputs):
-                    it = igr.replay_input(inpt.data, inpt.entry_no, num, timeout=timeout)
-                    res = adaptive_benchmark(map(get_rt_from_replay_res, it))
-                    if res is None:
-                        entry_rts[input_no] = np.nan
+                    if is_non_zero_runtime is None or is_non_zero_runtime[i]:
+                        it = igr.replay_input(inpt.data, inpt.entry_no, NUM_REPLAYS, timeout=TIMEOUT)
+                        res = adaptive_benchmark(map(get_rt_from_replay_res, it))
+                        if res is None:
+                            rts[i] = np.nan
+                        else:
+                            rts[i] = res
                     else:
-                        entry_rts[input_no] = res
-                rts.append(entry_rts)
+                        rts[i] = 0
+                    i += 1
+
+        assert i == num_inputs
+
         return rts
 
-    def get_module_runtimes_bak(module):
-        with InputGenReplay(module, **replay_options) as igr:
-            for inpt in inputs:
-                num = 5
-                timeout = 1
-                rts = []
-                for res in igr.replay_input(inpt.data, inpt.entry_no, num, timeout=timeout):
-                    logger.debug(f"Res {res}")
-                    re_match = re.search("MLGO_LOOP_UNROLL_TIMER ([0-9]+)", res.outs.decode("utf-8"))
-                    if re_match is None:
-                        logger.debug(f"No match")
-                        rts.append(None)
-                    else:
-                        f = int(re_match.group(1))
-                        logger.debug(f"Match {f}")
-                        rts.append(f)
-                yield rts
-
-    def get_udr_runtime(udr: UnrollDecisionResult):
+    def get_udr_runtime(udr: UnrollDecisionResult, is_non_zero_runtime=None):
         if udr.action or udr.factor == 1:
-            return UnrollDecisionRuntime(udr.factor, list(get_module_runtimes(udr.module)))
+            return UnrollDecisionRuntime(
+                udr.factor, get_module_runtimes(udr.module, is_non_zero_runtime)
+            )
         else:
             return UnrollDecisionRuntime(udr.factor, None)
 
@@ -347,11 +330,19 @@ def generate_samples(decision_results, inputs, replay_options, raw=False):
     def get_ud_raw_sample(ud: UnrollDecision):
         x = ud.features
         factor_runtimes = [None for _ in range(ADVICE_TENSOR_LEN)]
+        is_non_zero_runtime = None
         for udr in ud.results:
             if udr.factor != 1:
-                udrt = get_udr_runtime(udr)
+                udrt = get_udr_runtime(udr, is_non_zero_runtime)
                 assert udrt.factor >= 2
                 factor_runtimes[udrt.factor - UNROLL_FACTOR_OFFSET] = udrt.runtime
+                if is_non_zero_runtime is None:
+                    if udrt.runtime is not None:
+                        is_non_zero_runtime = udrt.runtime.astype(bool)
+                else:
+                    is_non_zero_runtime = is_non_zero_runtime & udrt.runtime.astype(bool)
+                if is_non_zero_runtime is not None and all(~is_non_zero_runtime):
+                    return None
 
         logging.debug(f"Got factor_runtimes {factor_runtimes}")
 
@@ -363,22 +354,14 @@ def generate_samples(decision_results, inputs, replay_options, raw=False):
         base_runtime = None
         for udr in ud.results:
             if udr.factor == 1:
-                udrt = get_udr_runtime(udr)
+                udrt = get_udr_runtime(udr, is_non_zero_runtime)
                 base_runtime = udrt.runtime
-                if base_runtime == None:
+                if base_runtime is None:
                     return None
 
         logging.debug(f"Got base_runtime {base_runtime}")
 
         return x, base_runtime, factor_runtimes
-
-    def get_ud_raw_samples(uds: Iterable[UnrollDecision]):
-        for ud in uds:
-            sample = get_ud_raw_sample(ud)
-            if sample is not None:
-                yield sample
-            else:
-                logger.debug(f"Obtained invalid sample")
 
     def get_ud_samples(uds: Iterable[UnrollDecision]):
         for ud in uds:
@@ -388,10 +371,7 @@ def generate_samples(decision_results, inputs, replay_options, raw=False):
             else:
                 logger.debug(f"Obtained invalid sample")
 
-    if raw:
-        yield from get_ud_raw_samples(decision_results)
-    else:
-        yield from get_ud_samples(decision_results)
+    yield from get_ud_samples(decision_results)
 
 
 if __name__ == "__main__":
