@@ -34,6 +34,7 @@ def parse_args_and_run():
     parser.add_argument("--output-dataset", required=True)
 
     parser.add_argument("--dump-llvm", default=False, action="store_true")
+    parser.add_argument("--non-benchmarking", default=False, action="store_true")
 
     parser.add_argument("--temp-dir", default=None)
     parser.add_argument("--save-temps", action="store_true", default=False)
@@ -63,11 +64,16 @@ def main(args):
             # physical_cores = psutil.cpu_count(logical=False)
             # os.sched_setaffinity(0, [CPUS[physical_cores - 1]])
             # context = ray.init(resources={PHYSICAL_CORE_RESOURCE: physical_cores - 1})
-            context = ray.init()
-            print(f"Dashboard at {context.dashboard_url}")
+            # context = ray.init()
+            # print(f"Dashboard at {context.dashboard_url}")
 
             with DatasetWriter(args.output_dataset) as dw:
-                dw.process(dr.get_iter(), process_module_wrapper, args)
+                fun = (
+                    process_module_wrapper_non_benchmarking
+                    if args.non_benchmarking
+                    else process_module_wrapper
+                )
+                dw.process(dr.get_iter(), process_module_wrapper_non_benchmarking, args)
         else:
             it = dr.get_one_iter(args.one)
             data = next(it)[1]
@@ -99,8 +105,15 @@ class UnrollDecisionRuntime:
     runtime: Optional[np.array]
 
 
+@ray.remote
+def process_module_wrapper_non_benchmarking(args, i, data):
+    print("PROCESS_MODULE_WRAPPER_NON_BENCHMARKING")
+    return process_module(args, i, data)
+
+
 @ray.remote(num_cpus=0, resources={PHYSICAL_CORE_RESOURCE: 1})
 def process_module_wrapper(args, i, data):
+    print("PROCESS_MODULE_WRAPPER")
     hostname = socket.gethostname()
     print(f"HOSTNAME {HOSTNAME} hostname {hostname} cpus {CPUS}")
     core_id = ray.get_runtime_context().worker.core_worker.resource_ids()[PHYSICAL_CORE_RESOURCE][0][0]
@@ -111,6 +124,7 @@ def process_module_wrapper(args, i, data):
 
 
 def process_module(args, i, data):
+    print("PROCESS_MODULE")
     decision_results = data["decision_results"]
     inputs = data["inputs"]
 
@@ -236,22 +250,6 @@ def get_speedup_factor(base: np.array, opt: np.array):
     # return gmean(arr)
 
 
-def rt_reduce(l):
-    arr = np.array(l, dtype=float)
-    arr = arr[~np.isnan(arr)]  # remove NaNs
-    if arr.size == 0:
-        return None
-    return np.median(arr)
-    # s = pd.Series(l).dropna()
-    # if len(s) == 0:
-    #     return None
-    # return s.median()
-
-
-def flatten(l):
-    return np.fromiter((rt_reduce(sl) for sl in l), dtype=float)
-
-
 def get_rt_from_replay_res(res):
     logger.debug(f"Res {res}")
     re_match = re.search("MLGO_LOOP_UNROLL_TIMER ([0-9]+)", res.outs.decode("utf-8"))
@@ -325,6 +323,7 @@ def generate_samples(decision_results, inputs, replay_options, raw=False):
     def get_ud_sample(ud: UnrollDecision):
         res = get_ud_raw_sample(ud)
         if res is None:
+            logger.debug(f"Got invalid raw sample")
             return None
         x, base_runtime, factor_runtimes = res
         return get_ud_sample_from_raw(x, base_runtime, factor_runtimes)
@@ -344,12 +343,14 @@ def generate_samples(decision_results, inputs, replay_options, raw=False):
                 else:
                     is_non_zero_runtime = is_non_zero_runtime & udrt.runtime.astype(bool)
                 if is_non_zero_runtime is not None and all(~is_non_zero_runtime):
+                    logger.debug("All inputs had 0 runtime")
                     return None
 
         logging.debug(f"Got factor_runtimes {factor_runtimes}")
 
         # If none of the factors succeeded.
         if all(factor_runtime is None for factor_runtime in factor_runtimes):
+            logger.debug("Failed to obtain runtime for any factor")
             return None
 
         # If we have any factor runtime to compare to, also get the base runtime
@@ -359,6 +360,7 @@ def generate_samples(decision_results, inputs, replay_options, raw=False):
                 udrt = get_udr_runtime(udr, is_non_zero_runtime)
                 base_runtime = udrt.runtime
                 if base_runtime is None:
+                    logger.debug("Failed to obtain runtime for base")
                     return None
 
         logging.debug(f"Got base_runtime {base_runtime}")
