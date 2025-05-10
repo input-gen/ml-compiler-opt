@@ -34,7 +34,6 @@ def parse_args_and_run():
     parser.add_argument("--output-dataset", required=True)
 
     parser.add_argument("--dump-llvm", default=False, action="store_true")
-    parser.add_argument("--non-benchmarking", default=False, action="store_true")
 
     parser.add_argument("--temp-dir", default=None)
     parser.add_argument("--save-temps", action="store_true", default=False)
@@ -49,9 +48,6 @@ def parse_args_and_run():
     main(args)
 
 
-PHYSICAL_CORE_RESOURCE = "physical_core"
-
-
 def main(args):
     if args.debug:
         logging.basicConfig(level=logging.DEBUG)
@@ -61,7 +57,7 @@ def main(args):
     with DatasetReader(args.dataset) as dr:
         if args.one is None:
             physical_cores = psutil.cpu_count(logical=False)
-            context = ray.init(resources={PHYSICAL_CORE_RESOURCE: physical_cores - 1})
+            context = ray.init(num_cpus=physical_cores - 1)
 
             args.cpu_mapping = ray.get(get_physical_cpu_mapping.remote())
             logger.info(f"Obtained CPU mapping: {args.cpu_mapping}")
@@ -87,7 +83,7 @@ def get_physical_cores():
     return mapping
 
 
-@ray.remote(num_cpus=0, resources={PHYSICAL_CORE_RESOURCE: 1})
+@ray.remote(num_cpus=1)
 def get_physical_cpu_mapping():
     return get_physical_cores()
 
@@ -98,16 +94,15 @@ class UnrollDecisionRuntime:
     runtime: Optional[np.array]
 
 
-@ray.remote
-def process_module_wrapper_non_benchmarking(args, i, data):
-    return process_module(args, i, data)
-
-
-@ray.remote(num_cpus=0, resources={PHYSICAL_CORE_RESOURCE: 1})
+@ray.remote(num_cpus=1)
 def process_module_wrapper(args, i, data):
+    if args.debug:
+        logging.basicConfig(level=logging.DEBUG)
+    else:
+        logging.basicConfig(level=logging.INFO)
     logger.info(f"cpus {args.cpu_mapping}")
-    core_id = ray.get_runtime_context().worker.core_worker.resource_ids()[PHYSICAL_CORE_RESOURCE][0][0]
-    assert core_id < len(args.cpu_mapping)
+    core_id = ray.get_runtime_context().worker.core_worker.resource_ids()['cpu'][0][0]
+    assert core_id < len(args.cpu_mapping) - 1
     os.sched_setaffinity(0, [args.cpu_mapping[core_id]])
 
     return process_module(args, i, data)
