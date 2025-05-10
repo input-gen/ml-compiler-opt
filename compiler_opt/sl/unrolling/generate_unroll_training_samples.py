@@ -60,15 +60,12 @@ def main(args):
 
     with DatasetReader(args.dataset) as dr:
         if args.one is None:
-            # TODO Currently this is set up to only work with on a single node.
-            # physical_cores = psutil.cpu_count(logical=False)
-            # os.sched_setaffinity(0, [CPUS[physical_cores - 1]])
-            # context = ray.init(resources={PHYSICAL_CORE_RESOURCE: physical_cores - 1})
-            # context = ray.init()
-            # print(f"Dashboard at {context.dashboard_url}")
+            physical_cores = psutil.cpu_count(logical=False)
+            context = ray.init(resources={PHYSICAL_CORE_RESOURCE: physical_cores - 1})
 
             args.cpu_mapping = ray.get(get_physical_cpu_mapping.remote())
             logger.info(f"Obtained CPU mapping: {args.cpu_mapping}")
+            assert physical_cores == len(args.cpu_mapping)
 
             with DatasetWriter(args.output_dataset) as dw:
                 fun = process_module_wrapper
@@ -137,10 +134,7 @@ def process_module(args, i, data):
 
     logger.debug(f"Attempting sample generation for {len(decision_results)} udr's")
 
-    try:
-        samples = list(generate_samples(decision_results, inputs, replay_options, raw=True))
-    except InputGenError as e:
-        return ProcessResult(i, None)
+    samples = list(generate_samples(decision_results, inputs, replay_options, raw=True))
 
     if len(samples) == 0:
         logger.debug("No samples generated")
@@ -290,8 +284,13 @@ def generate_samples(decision_results, inputs, replay_options, raw=False):
                 )
                 for input_no, inpt in enumerate(entry_inputs):
                     if is_non_zero_runtime is None or is_non_zero_runtime[i]:
-                        it = igr.replay_input(inpt.data, inpt.entry_no, NUM_REPLAYS, timeout=TIMEOUT)
-                        res = adaptive_benchmark(map(get_rt_from_replay_res, it))
+                        try:
+                            it = igr.replay_input(
+                                inpt.data, inpt.entry_no, NUM_REPLAYS, timeout=TIMEOUT
+                            )
+                            res = adaptive_benchmark(map(get_rt_from_replay_res, it))
+                        except InputGenError as e:
+                            res = None
                         if res is None:
                             rts[i] = np.nan
                         else:
@@ -307,11 +306,13 @@ def generate_samples(decision_results, inputs, replay_options, raw=False):
     def get_udr_runtime(udr: UnrollDecisionResult, is_non_zero_runtime=None):
         logger.debug(f"Getting runtime for udr action {udr.action}, factor {udr.factor}")
         if udr.action or udr.factor == 1:
-            return UnrollDecisionRuntime(
-                udr.factor, get_module_runtimes(udr.module, is_non_zero_runtime)
-            )
-        else:
-            return UnrollDecisionRuntime(udr.factor, None)
+            try:
+                return UnrollDecisionRuntime(
+                    udr.factor, get_module_runtimes(udr.module, is_non_zero_runtime)
+                )
+            except InputGenError as e:
+                pass
+        return UnrollDecisionRuntime(udr.factor, None)
 
     def get_ud_sample(ud: UnrollDecision):
         res = get_ud_raw_sample(ud)
@@ -362,10 +363,7 @@ def generate_samples(decision_results, inputs, replay_options, raw=False):
 
     def get_ud_samples(uds: Iterable[UnrollDecision]):
         for ud in uds:
-            try:
-                sample = get_ud_sample(ud)
-            except InputGenError as e:
-                sample = None
+            sample = get_ud_sample(ud)
             if sample is not None:
                 yield sample
             else:
