@@ -67,13 +67,12 @@ def main(args):
             # context = ray.init()
             # print(f"Dashboard at {context.dashboard_url}")
 
+            args.cpu_mapping = ray.get(get_physical_cpu_mapping.remote())
+            logger.info(f"Obtained CPU mapping: {args.cpu_mapping}")
+
             with DatasetWriter(args.output_dataset) as dw:
-                fun = (
-                    process_module_wrapper_non_benchmarking
-                    if args.non_benchmarking
-                    else process_module_wrapper
-                )
-                dw.process(dr.get_iter(), process_module_wrapper_non_benchmarking, args)
+                fun = process_module_wrapper
+                dw.process(dr.get_iter(), fun, args)
         else:
             it = dr.get_one_iter(args.one)
             data = next(it)[1]
@@ -91,12 +90,9 @@ def get_physical_cores():
     return mapping
 
 
-CPUS = get_physical_cores()
-HOSTNAME = socket.gethostname()
-print(f"On host {HOSTNAME} cpus {CPUS}")
-os.sched_setaffinity(0, [CPUS[len(CPUS) - 1]])
-
-assert set(CPUS.keys()) == set(range(len(CPUS)))
+@ray.remote(num_cpus=0, resources={PHYSICAL_CORE_RESOURCE: 1})
+def get_physical_cpu_mapping():
+    return get_physical_cores()
 
 
 @dataclasses.dataclass(frozen=True)
@@ -107,24 +103,21 @@ class UnrollDecisionRuntime:
 
 @ray.remote
 def process_module_wrapper_non_benchmarking(args, i, data):
-    print("PROCESS_MODULE_WRAPPER_NON_BENCHMARKING")
     return process_module(args, i, data)
 
 
 @ray.remote(num_cpus=0, resources={PHYSICAL_CORE_RESOURCE: 1})
 def process_module_wrapper(args, i, data):
-    print("PROCESS_MODULE_WRAPPER")
-    hostname = socket.gethostname()
-    print(f"HOSTNAME {HOSTNAME} hostname {hostname} cpus {CPUS}")
+    logger.info(f"cpus {args.cpu_mapping}")
     core_id = ray.get_runtime_context().worker.core_worker.resource_ids()[PHYSICAL_CORE_RESOURCE][0][0]
-    assert core_id < len(CPUS)
-    os.sched_setaffinity(0, [CPUS[core_id]])
+    assert core_id < len(args.cpu_mapping)
+    os.sched_setaffinity(0, [args.cpu_mapping[core_id]])
 
     return process_module(args, i, data)
 
 
 def process_module(args, i, data):
-    print("PROCESS_MODULE")
+    # print("PROCESS_MODULE")
     decision_results = data["decision_results"]
     inputs = data["inputs"]
 
@@ -142,6 +135,8 @@ def process_module(args, i, data):
         compile_timeout=COMPILE_TIMEOUT,
     )
 
+    logger.debug(f"Attempting sample generation for {len(decision_results)} udr's")
+
     try:
         samples = list(generate_samples(decision_results, inputs, replay_options, raw=True))
     except InputGenError as e:
@@ -149,9 +144,6 @@ def process_module(args, i, data):
 
     if len(samples) == 0:
         logger.debug("No samples generated")
-        return ProcessResult(i, None)
-    if samples is None:
-        logger.debug(f"InputGenReplay failed: {e}")
         return ProcessResult(i, None)
 
     logger.debug(f"Successfully generated {len(samples)} samples")
@@ -273,9 +265,10 @@ def get_ud_sample_from_raw(x, base_runtime, factor_runtimes):
 
         # If we did not manage to obtain a speedup we fail
         if any(r is None for r in y):
+            logger.debug(f"Failed to obtain speedup for {len([r is None for r in y])}")
             return None
 
-        return (x, y)
+        return (x, np.array(y))
 
 
 def generate_samples(decision_results, inputs, replay_options, raw=False):
@@ -323,7 +316,7 @@ def generate_samples(decision_results, inputs, replay_options, raw=False):
     def get_ud_sample(ud: UnrollDecision):
         res = get_ud_raw_sample(ud)
         if res is None:
-            logger.debug(f"Got invalid raw sample")
+            logger.debug(f"Failed to obtain valid raw sample")
             return None
         x, base_runtime, factor_runtimes = res
         return get_ud_sample_from_raw(x, base_runtime, factor_runtimes)
@@ -343,7 +336,7 @@ def generate_samples(decision_results, inputs, replay_options, raw=False):
                 else:
                     is_non_zero_runtime = is_non_zero_runtime & udrt.runtime.astype(bool)
                 if is_non_zero_runtime is not None and all(~is_non_zero_runtime):
-                    logger.debug("All inputs had 0 runtime")
+                    logger.debug("Failed to obtain non-0 runtime")
                     return None
 
         logging.debug(f"Got factor_runtimes {factor_runtimes}")
@@ -369,11 +362,14 @@ def generate_samples(decision_results, inputs, replay_options, raw=False):
 
     def get_ud_samples(uds: Iterable[UnrollDecision]):
         for ud in uds:
-            sample = get_ud_sample(ud)
+            try:
+                sample = get_ud_sample(ud)
+            except InputGenError as e:
+                sample = None
             if sample is not None:
                 yield sample
             else:
-                logger.debug(f"Obtained invalid sample")
+                logger.debug(f"Failed to obtain sample")
 
     yield from get_ud_samples(decision_results)
 
