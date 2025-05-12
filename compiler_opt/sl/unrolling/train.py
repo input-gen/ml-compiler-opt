@@ -6,8 +6,6 @@ import numpy as np
 import pandas
 from statistics import geometric_mean
 
-from . import unrolling_runner
-
 from .unroll_model import ADVICE_TENSOR_LEN, UNROLL_FACTOR_OFFSET, MAX_UNROLL_FACTOR
 from com_pile_utils.dataset_reader import DatasetReader
 
@@ -56,27 +54,18 @@ def speedup_metric(y_true, y_pred):
 def convert_data_to_df(data):
     features_spec = data["features_spec"]
     advice_spec = data["advice_spec"]
-    raw_samples = data["samples"]
-
-    samples = []
-    for x, base_rt, factor_rts in raw_samples:
-        print(".", end="", flush=True)
-        res = unrolling_runner.get_ud_sample_from_raw(x, base_rt, factor_rts)
-        if res is None:
-            continue
-        samples.append(res)
+    samples = data["samples"]
 
     flattened_samples = []
     for features, advice in samples:
-        flattened_features = []
-        for feature in features:
-            assert len(feature) == 1
-            flattened_features.append(feature[0])
-        flattened_samples.append(flattened_features + advice)
+        flattened_features = np.concatenate(features + [advice])
+        flattened_samples.append(flattened_features)
 
     labels = []
     for s in features_spec:
-        labels.append(s.name)
+        assert len(s.shape) == 1
+        for i in range(s.shape[0]):
+            labels.append(s.name + str(i))
     labels += [advice_spec.name + str(i + 2) for i in range(advice_spec.shape[0])]
 
     df = pandas.DataFrame(flattened_samples, columns=labels)
