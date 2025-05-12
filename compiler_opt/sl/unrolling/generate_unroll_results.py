@@ -41,6 +41,7 @@ def parse_args_and_run():
     parser.add_argument("--one", type=int, default=None)
 
     parser.add_argument("--debug", default=False, action="store_true")
+    parser.add_argument("--debug-profiling", default=False, action="store_true")
 
     args = parser.parse_args()
     main(args)
@@ -112,10 +113,10 @@ def get_physical_cpu_mapping():
 
 @ray.remote(num_cpus=0, resources={PHYSICAL_CORE_RESOURCE: 1})
 def process_module_wrapper(args, i, data):
-    if args.debug:
-        logging.basicConfig(level=logging.DEBUG)
-    else:
-        logging.basicConfig(level=logging.INFO)
+    logger = logging.getLogger(__name__ + ".process_module_wrapper")
+    if args.debug or args.debug_profiling:
+        logger.setLevel(level=logging.DEBUG)
+
     logger.debug(f"cpus {args.cpu_mapping}")
     core_id = ray.get_runtime_context().worker.core_worker.resource_ids()[PHYSICAL_CORE_RESOURCE][0][0]
     assert core_id < len(args.cpu_mapping) - 1
@@ -143,6 +144,10 @@ def process_module(args, i, data):
 
 
 def process_module_impl_results(args, idx, data):
+    logger = logging.getLogger(__name__ + ".process_module_impl_results")
+    if args.debug or args.debug_profiling:
+        logger.setLevel(level=logging.DEBUG)
+
     if args.save_temps:
         with tempfile.NamedTemporaryFile(mode="wb", delete=False) as tmp:
             with open(tmp.name, "wb") as f:
@@ -192,6 +197,10 @@ def process_module_impl_results(args, idx, data):
 
 
 def process_module_impl_sample(args, i, data):
+    logger = logging.getLogger(__name__ + ".process_module_impl_sample")
+    if args.debug or args.debug_profiling:
+        logger.setLevel(level=logging.DEBUG)
+
     decision_results = data["decision_results"]
     inputs = data["inputs"]
 
@@ -211,7 +220,7 @@ def process_module_impl_sample(args, i, data):
 
     logger.debug(f"Attempting sample generation for {len(decision_results)} udr's")
 
-    samples = list(generate_samples(decision_results, inputs, replay_options, raw=True))
+    samples = list(generate_samples(decision_results, inputs, replay_options, args))
 
     if len(samples) == 0:
         logger.debug("No samples generated")
@@ -227,122 +236,122 @@ def process_module_impl_sample(args, i, data):
     return ProcessResult(i, [d])
 
 
-def adaptive_benchmark(
-    iterator,
-    initial_samples=5,
-    max_initial_samples=20,
-    max_samples=100,
-    confidence=0.95,
-    relative_ci_threshold=0.05,
-):
-    """
-    Adaptive benchmarking loop to estimate mean runtime with confidence.
+def generate_samples(decision_results, inputs, replay_options, args):
+    logger = logging.getLogger(__name__ + ".generate_samples")
+    if args.debug or args.debug_profiling:
+        logger.setLevel(level=logging.DEBUG)
 
-    Parameters:
-        iterator: An iterator yielding runtime samples.
-        initial_samples: Number of initial samples to take.
-        max_initial_samples: Max number of tries to get initial samples.
-        max_samples: Max number of samples to avoid infinite loop.
-        confidence: Desired confidence level (e.g., 0.95 for 95% CI).
-        relative_ci_threshold: Target relative CI width (e.g., 0.05 means CI width < 5% of mean).
+    def adaptive_benchmark(
+        iterator,
+        initial_samples=5,
+        max_initial_samples=20,
+        max_samples=100,
+        confidence=0.95,
+        relative_ci_threshold=0.05,
+    ):
+        """
+        Adaptive benchmarking loop to estimate mean runtime with confidence.
 
-    Returns:
-        mean_estimate, ci_half_width, num_samples
-    """
+        Parameters:
+            iterator: An iterator yielding runtime samples.
+            initial_samples: Number of initial samples to take.
+            max_initial_samples: Max number of tries to get initial samples.
+            max_samples: Max number of samples to avoid infinite loop.
+            confidence: Desired confidence level (e.g., 0.95 for 95% CI).
+            relative_ci_threshold: Target relative CI width (e.g., 0.05 means CI width < 5% of mean).
 
-    logger.debug("Starting adaptive benchmarking")
+        Returns:
+            mean_estimate, ci_half_width, num_samples
+        """
 
-    samples = np.array([], dtype=float)
+        logger.debug("Starting adaptive benchmarking")
 
-    n = 0
-    while len(samples) < initial_samples and n < max_initial_samples:
-        n += 1
-        new_sample = next(iterator)
-        if new_sample is not None:
-            if new_sample == 0:
-                logger.debug(f"Got zero")
-                return 0
-            samples = np.append(samples, new_sample)
-            logger.debug(f"Obtained sample {new_sample}, len {len(samples)}")
+        samples = np.array([], dtype=float)
 
-    if len(samples) < initial_samples:
-        logger.debug(f"Too many replay failures")
-        return None
-
-    while n < max_samples:
-        sample_mean = np.mean(samples)
-        sample_std = np.std(samples, ddof=1)  # sample std (unbiased)
-
-        # t critical value
-        alpha = 1 - confidence
-        t_crit = stats.t.ppf(1 - alpha / 2, df=n - 1)
-
-        margin_error = t_crit * (sample_std / np.sqrt(n))
-        relative_ci_width = (2 * margin_error) / sample_mean
-
-        # Check stopping criterion
-        if relative_ci_width < relative_ci_threshold:
-            logger.debug(f"Converged: mean {sample_mean}, std {sample_std}")
-            return sample_mean
-
-        # Get another sample
-        new_sample = None
-        while new_sample is None and n < max_samples:
-            new_sample = next(iterator)
+        n = 0
+        while len(samples) < initial_samples and n < max_initial_samples:
             n += 1
-        if new_sample is not None:
-            samples = np.append(samples, new_sample)
+            new_sample = next(iterator)
+            if new_sample is not None:
+                if new_sample == 0:
+                    logger.debug(f"Got zero")
+                    return 0
+                samples = np.append(samples, new_sample)
+                logger.debug(f"Obtained sample {new_sample}, len {len(samples)}")
 
-    logger.debug(f"Could not converge: mean {sample_mean}, std {sample_std}")
-    return None
-
-    # final_mean = np.mean(samples)
-    # final_margin_error = stats.t.ppf(1 - (1 - confidence)/2, df=n-1) * (np.std(samples, ddof=1) / np.sqrt(n))
-    # return final_mean, final_margin_error, n
-
-
-def get_speedup_factor(base: np.array, opt: np.array):
-    # This will get element wise speedup factors for all inputs where either
-    # succeeded
-    arr = base / opt
-    arr = arr[~np.isnan(arr)]  # remove NaNs
-    if arr.size == 0:
-        return None
-    geomean = np.exp(np.mean(np.log(arr)))
-    return geomean
-    # return gmean(arr)
-
-
-def get_rt_from_replay_res(res):
-    logger.debug(f"Res {res}")
-    re_match = re.search("MLGO_LOOP_UNROLL_TIMER ([0-9]+)", res.outs.decode("utf-8"))
-    if re_match is None:
-        logger.debug(f"No match")
-        return None
-    else:
-        f = int(re_match.group(1))
-        logger.debug(f"Match {f}")
-        return f
-
-
-def get_ud_sample_from_raw(x, base_runtime, factor_runtimes):
-    with np.errstate(divide="ignore", invalid="ignore"):
-        # Obtain speedup factors for all unroll factors.
-        # Encode failure to unroll as speedup of 0.0.
-        y = [
-            get_speedup_factor(base_runtime, factor_runtime) if factor_runtime is not None else 0.0
-            for factor_runtime in factor_runtimes
-        ]
-
-        # If we did not manage to obtain a speedup we fail
-        if any(r is None for r in y):
-            logger.debug(f"Failed to obtain speedup for {len([r is None for r in y])}")
+        if len(samples) < initial_samples:
+            logger.debug(f"Too many replay failures")
             return None
 
-        return (x, np.array(y))
+        while n < max_samples:
+            sample_mean = np.mean(samples)
+            sample_std = np.std(samples, ddof=1)  # sample std (unbiased)
 
+            # t critical value
+            alpha = 1 - confidence
+            t_crit = stats.t.ppf(1 - alpha / 2, df=n - 1)
 
-def generate_samples(decision_results, inputs, replay_options, raw=False):
+            margin_error = t_crit * (sample_std / np.sqrt(n))
+            relative_ci_width = (2 * margin_error) / sample_mean
+
+            # Check stopping criterion
+            if relative_ci_width < relative_ci_threshold:
+                logger.debug(f"Converged: mean {sample_mean}, std {sample_std}")
+                return sample_mean
+
+            # Get another sample
+            new_sample = None
+            while new_sample is None and n < max_samples:
+                new_sample = next(iterator)
+                n += 1
+            if new_sample is not None:
+                samples = np.append(samples, new_sample)
+
+        logger.debug(f"Could not converge: mean {sample_mean}, std {sample_std}")
+        return None
+
+        # final_mean = np.mean(samples)
+        # final_margin_error = stats.t.ppf(1 - (1 - confidence)/2, df=n-1) * (np.std(samples, ddof=1) / np.sqrt(n))
+        # return final_mean, final_margin_error, n
+
+    def get_speedup_factor(base: np.array, opt: np.array):
+        # This will get element wise speedup factors for all inputs where either
+        # succeeded
+        arr = base / opt
+        arr = arr[~np.isnan(arr)]  # remove NaNs
+        if arr.size == 0:
+            return None
+        geomean = np.exp(np.mean(np.log(arr)))
+        return geomean
+        # return gmean(arr)
+
+    def get_rt_from_replay_res(res):
+        logger.debug(f"Res {res}")
+        re_match = re.search("MLGO_LOOP_UNROLL_TIMER ([0-9]+)", res.outs.decode("utf-8"))
+        if re_match is None:
+            logger.debug(f"No match")
+            return None
+        else:
+            f = int(re_match.group(1))
+            logger.debug(f"Match {f}")
+            return f
+
+    def get_ud_sample_from_raw(x, base_runtime, factor_runtimes):
+        with np.errstate(divide="ignore", invalid="ignore"):
+            # Obtain speedup factors for all unroll factors.
+            # Encode failure to unroll as speedup of 0.0.
+            y = [
+                get_speedup_factor(base_runtime, factor_runtime) if factor_runtime is not None else 0.0
+                for factor_runtime in factor_runtimes
+            ]
+
+            # If we did not manage to obtain a speedup we fail
+            if any(r is None for r in y):
+                logger.debug(f"Failed to obtain speedup for {len([r is None for r in y])}")
+                return None
+
+            return (x, np.array(y))
+
     def get_module_runtimes(module, is_non_zero_runtime=None):
         NUM_REPLAYS = None
         TIMEOUT = 1
