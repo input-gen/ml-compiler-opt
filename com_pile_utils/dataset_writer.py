@@ -100,6 +100,7 @@ class DatasetWriter:
 
     def setup_database(self):
         self.cur = self.con.cursor()
+        self.cur.execute("PRAGMA journal_mode=WAL;")
         self.cur.execute(f"CREATE TABLE IF NOT EXISTS {DATA_TABLE}({ID_FIELD})")
         self.cur.execute(f"CREATE TABLE IF NOT EXISTS {PROCESSED_TABLE}({ID_FIELD}, {SUCCESS_FIELD})")
         self.con.commit()
