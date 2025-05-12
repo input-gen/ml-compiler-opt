@@ -119,11 +119,18 @@ def process_module_wrapper(args, i, data):
     logger.debug(f"cpus {args.cpu_mapping}")
     core_id = ray.get_runtime_context().worker.core_worker.resource_ids()[PHYSICAL_CORE_RESOURCE][0][0]
     assert core_id < len(args.cpu_mapping) - 1
-    this_core = args.cpu_mapping[core_id][0]
-    logger.debug(f"cpu {this_core}")
-    os.sched_setaffinity(0, [this_core])
+    benchmarking_cores = [args.cpu_mapping[core_id][0]]
+    task_cores = args.cpu_mapping[core_id]
+    logger.debug(f"benchmarking {benchmarking_cores}")
+    logger.debug(f"task {task_cores}")
 
-    return process_module(args, i, data)
+    os.sched_setaffinity(0, task_cores)
+    res = process_module_impl_results(args, i, data)
+    if res is None:
+        return ProcessResult(i, None)
+    assert len(res) == 1
+    os.sched_setaffinity(0, benchmarking_cores)
+    return process_module_impl_sample(args, i, res[0])
 
 
 def process_module(args, i, data):
