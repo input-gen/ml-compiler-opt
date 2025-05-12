@@ -48,10 +48,6 @@ def parse_args_and_run():
     args = parser.parse_args()
     main(args)
 
-
-PHYSICAL_CORE_RESOURCE = "physical_core"
-
-
 def main(args):
     if args.debug:
         logging.basicConfig(level=logging.DEBUG)
@@ -114,7 +110,6 @@ def process_module_wrapper(args, i, data):
 
 
 def process_module(args, i, data):
-    # print("PROCESS_MODULE")
     decision_results = data["decision_results"]
     inputs = data["inputs"]
 

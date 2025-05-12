@@ -12,7 +12,6 @@ import re
 import os
 import json
 import subprocess
-from datasets import load_dataset
 import dataclasses
 import collections
 import sys
@@ -349,10 +348,11 @@ class InputGenReplay(InputGenUtils):
 
         cmd = [self.repl_exec_path]
         _, errs = self.get_output(cmd, allow_fail=True, timeout=self.get_compile_timeout())
-        re_match = re.search("  Num available functions: ([0-9]+)", errs.decode("utf-8"))
+        errs = errs.decode("utf-8")
+        re_match = re.search("  Num available functions: ([0-9]+)", errs)
 
         if re_match is None:
-            raise InputGenError("Could not parse number of available entries")
+            raise InputGenError("Could not parse number of available entries\n" + errs)
 
         self.num_entries = int(re_match.group(1))
         self.preparation_done = True
