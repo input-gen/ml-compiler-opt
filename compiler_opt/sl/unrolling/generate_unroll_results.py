@@ -48,6 +48,8 @@ def parse_args_and_run():
 
 PHYSICAL_CORE_RESOURCE = "physical_core"
 
+MANAGER_CORES_NUM = 5
+
 
 def main(args):
     if args.debug:
@@ -58,11 +60,23 @@ def main(args):
     with DatasetReader(args.dataset) as dr:
         if args.one is None:
             physical_cores = psutil.cpu_count(logical=False)
-            context = ray.init(log_to_driver=False, resources={PHYSICAL_CORE_RESOURCE: physical_cores - 1})
+            cpu_mapping = get_physical_cores()
+            assert len(cpu_mapping) == physical_cores
+            logger.info(f"cpu_mapping {cpu_mapping}")
 
+            manager_cores = list(range(physical_cores - 1 - MANAGER_CORES_NUM, physical_cores))
+            logger.info(f"Manager cores {manager_cores}")
+
+            manager_cpus = sum([cpu_mapping[i] for i in manager_cores], [])
+            logger.info(f"Manager cpus {manager_cpus}")
+            os.sched_setaffinity(0, manager_cpus)
+
+            context = ray.init(
+                log_to_driver=False, resources={PHYSICAL_CORE_RESOURCE: physical_cores - 1}
+            )
             args.cpu_mapping = ray.get(get_physical_cpu_mapping.remote())
-            logger.info(f"Obtained CPU mapping: {args.cpu_mapping}")
             assert physical_cores == len(args.cpu_mapping)
+            assert args.cpu_mapping == cpu_mapping
 
             with DatasetWriter(args.output_dataset) as dw:
                 dw.process(dr.get_iter(), process_module_wrapper, args)
@@ -79,7 +93,9 @@ def get_physical_cores():
     for line in lines:
         cpu, core = map(int, line.split(","))
         if core not in mapping:
-            mapping[core] = cpu
+            mapping[core] = [cpu]
+        else:
+            mapping[core].append(cpu)
     return mapping
 
 
@@ -94,17 +110,18 @@ def get_physical_cpu_mapping():
     return get_physical_cores()
 
 
-
 @ray.remote(num_cpus=0, resources={PHYSICAL_CORE_RESOURCE: 1})
 def process_module_wrapper(args, i, data):
     if args.debug:
         logging.basicConfig(level=logging.DEBUG)
     else:
         logging.basicConfig(level=logging.INFO)
-    logger.info(f"cpus {args.cpu_mapping}")
+    logger.debug(f"cpus {args.cpu_mapping}")
     core_id = ray.get_runtime_context().worker.core_worker.resource_ids()[PHYSICAL_CORE_RESOURCE][0][0]
-    assert core_id < len(args.cpu_mapping)
-    os.sched_setaffinity(0, [args.cpu_mapping[core_id]])
+    assert core_id < len(args.cpu_mapping) - 1
+    this_core = args.cpu_mapping[core_id][0]
+    logger.debug(f"cpu {this_core}")
+    os.sched_setaffinity(0, [this_core])
 
     return process_module(args, i, data)
 
@@ -393,7 +410,7 @@ def generate_samples(decision_results, inputs, replay_options, raw=False):
                     logger.debug("Failed to obtain non-0 runtime")
                     return None
 
-        logging.debug(f"Got factor_runtimes {factor_runtimes}")
+        logger.debug(f"Got factor_runtimes {factor_runtimes}")
 
         # If none of the factors succeeded.
         if all(factor_runtime is None for factor_runtime in factor_runtimes):
@@ -410,7 +427,7 @@ def generate_samples(decision_results, inputs, replay_options, raw=False):
                     logger.debug("Failed to obtain runtime for base")
                     return None
 
-        logging.debug(f"Got base_runtime {base_runtime}")
+        logger.debug(f"Got base_runtime {base_runtime}")
 
         return x, base_runtime, factor_runtimes
 
