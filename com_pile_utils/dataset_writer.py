@@ -47,6 +47,11 @@ PROCESSED_TABLE = "processed"
 ID_FIELD = "id"
 SUCCESS_FIELD = "success"
 
+GENERATION_TABLE = "generation"
+TIME_FIELD = "time"
+NUM_SUCCEEDED_FIELD = "succeeded"
+NUM_FAILED_FIELD = "failed"
+
 # Blob size limit. After this limit, a path will be stored in the table
 # and the blob will be stored on disk.
 BLOB_SIZE_LIMIT = 100 * 1000  # 100 KB
@@ -103,6 +108,9 @@ class DatasetWriter:
         self.cur.execute("PRAGMA journal_mode=WAL;")
         self.cur.execute(f"CREATE TABLE IF NOT EXISTS {DATA_TABLE}({ID_FIELD})")
         self.cur.execute(f"CREATE TABLE IF NOT EXISTS {PROCESSED_TABLE}({ID_FIELD}, {SUCCESS_FIELD})")
+        self.cur.execute(
+            f"CREATE TABLE IF NOT EXISTS {GENERATION_TABLE}({TIME_FIELD}, {NUM_SUCCEEDED_FIELD}, {NUM_FAILED_FIELD})"
+        )
         self.con.commit()
 
         self.already_processed = {
@@ -116,6 +124,12 @@ class DatasetWriter:
     def add_failure(self, idx):
         self.cur.execute(
             f"INSERT INTO {PROCESSED_TABLE} ({ID_FIELD}, {SUCCESS_FIELD}) VALUES(?, ?)", (idx, False)
+        )
+
+    def add_generation_metadata(self, t, s, f):
+        self.cur.execute(
+            f"INSERT INTO {GENERATION_TABLE} ({TIME_FIELD}, {NUM_SUCCEEDED_FIELD}, {NUM_FAILED_FIELD}) VALUES(?, ?, ?)",
+            (t, s, f),
         )
 
     def ensure_cols(self, sample_dict):
@@ -246,10 +260,12 @@ class DatasetWriter:
                 print(f"succeeded({num_finished_success} r) ", end="", flush=True)
                 print(f"failed({num_finished_fail} r) ", end="", flush=True)
                 print(f"throughput ", end="", flush=True)
-                print(f"succeeded({num_finished_success / cur_time:.2f} r/s) ", end="", flush=True)
-                print(f"failed({num_finished_fail / cur_time:.2f} r/s) ", end="", flush=True)
+                print(f"succeeded({num_finished_success / cur_time:.4f} r/s) ", end="", flush=True)
+                print(f"failed({num_finished_fail / cur_time:.4f} r/s) ", end="", flush=True)
                 time_status_printed = cur_time
 
+        self.add_generation_metadata(cur_time, num_finished_success, num_finished_fail)
+        self.con.commit()
         print()
 
 
