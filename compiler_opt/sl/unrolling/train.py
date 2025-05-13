@@ -57,8 +57,8 @@ def convert_data_to_df(data):
     samples = data["samples"]
 
     flattened_samples = []
-    for features, advice in samples:
-        flattened_features = np.concatenate(features + [advice])
+    for sample in samples:
+        flattened_features = np.concatenate(sample.features + [sample.advice])
         flattened_samples.append(flattened_features)
 
     labels = []
