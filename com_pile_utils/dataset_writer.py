@@ -41,10 +41,12 @@ class CorruptMetadata(Exception):
 
 PICKLED_COLUMN_PREFIX = "__pickled_"
 
+PRIMARY_KEY = "rowid"
+
 DATA_TABLE = "data"
 PROCESSED_TABLE = "processed"
 
-ID_FIELD = "id"
+ID_FIELD = "original_rowid"
 SUCCESS_FIELD = "success"
 
 GENERATION_TABLE = "generation"
@@ -102,6 +104,9 @@ class DatasetWriter:
             print("Will break immediately, please wait.")
             self.should_break = True
             self.should_break_immediately = True
+
+    def get_already_processed(self):
+        return self.already_processed
 
     def setup_database(self):
         self.cur = self.con.cursor()

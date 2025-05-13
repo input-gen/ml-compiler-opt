@@ -8,6 +8,7 @@ from . import generate_unroll_results as gur
 from . import generate_unroll_training_samples as guts
 import com_pile_utils.generate_com_pile_loop_inputs as gcpli
 import com_pile_utils.generate_com_pile_loop as gcpl
+from com_pile_utils.dataset_writer import ID_FIELD
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG)
@@ -1347,7 +1348,7 @@ class GenCompileLoopInputsTest(unittest.TestCase):
         loop["module"] = TEST_MODULE
         loop["num_loops"] = 17
         loop["language"] = "c"
-        loop["id"] = 15
+        loop[ID_FIELD] = 15
 
         args = Namespace(
             mclang=[],
@@ -1366,7 +1367,7 @@ class GenCompileLoopInputsTest(unittest.TestCase):
         self.assertGreater(len(loop_inputs.data[0]["inputs"]), 0)
 
         loop = loop_inputs.data[0]
-        loop["id"] = 17
+        loop[ID_FIELD] = 17
 
         args = Namespace(
             mclang=[],
@@ -1379,7 +1380,7 @@ class GenCompileLoopInputsTest(unittest.TestCase):
         res = gur.process_module(args, 14, loop)
         print(res)
         loop = res.data[0]
-        loop["id"] = 18
+        loop[ID_FIELD] = 18
 
         args = Namespace(
             mclang=[],
@@ -1402,7 +1403,7 @@ class GenCompileLoopInputsTest(unittest.TestCase):
         data = dict()
         data["content"] = TEST_MODULE
         data["language"] = "c"
-        data["id"] = 15
+        data[ID_FIELD] = 15
         loops = gcpl.process_module(args, 10, data)
         self.assertIsNotNone(loops)
         logger.debug("loops")
@@ -1413,7 +1414,7 @@ class GenCompileLoopInputsTest(unittest.TestCase):
         loop = ds[0]
         logger.debug("loop")
         logger.debug(loop)
-        loop["id"] = 16
+        loop[ID_FIELD] = 16
 
         args = Namespace(
             mclang=[],
@@ -1434,7 +1435,7 @@ class GenCompileLoopInputsTest(unittest.TestCase):
         self.assertGreater(len(loop_inputs.data[0]["inputs"]), 0)
 
         loop = loop_inputs.data[0]
-        loop["id"] = 17
+        loop[ID_FIELD] = 17
 
         args = Namespace(
             mclang=[],
@@ -1449,7 +1450,7 @@ class GenCompileLoopInputsTest(unittest.TestCase):
         res = gur.process_module(args, 14, loop)
         print(res)
         loop = res.data[0]
-        loop["id"] = 18
+        loop[ID_FIELD] = 18
 
         args = Namespace(
             mclang=[],

@@ -20,6 +20,7 @@ from datasets import load_dataset
 
 from .dataset_writer import DatasetWriter, ProcessResult
 from .dataset_reader import DatasetReader
+from . import generate_main
 
 logger = logging.getLogger(__name__)
 
@@ -40,23 +41,7 @@ def parse_args_and_run():
     parser.add_argument("--debug", default=False, action="store_true")
 
     args = parser.parse_args()
-
-    main(args)
-
-
-def main(args):
-    if args.debug:
-        logging.basicConfig(level=logging.DEBUG)
-    else:
-        logging.basicConfig(level=logging.INFO)
-
-    with DatasetReader(args.dataset) as dr:
-        if args.one is None:
-            with DatasetWriter(args.output_dataset) as dw:
-                dw.process(dr.get_iter(), process_module_wrapper, args)
-        else:
-            it = dr.get_one_iter(args.one)
-            process_module(args, args.one, next(it)[1])
+    generate_main.main(args, process_module_wrapper)
 
 
 @ray.remote

@@ -18,8 +18,8 @@ from input_gen.utils import (
     InputGenError,
     InputGenInstrumentationError,
 )
-from .dataset_writer import DatasetWriter, ProcessResult
-from .dataset_reader import DatasetReader
+from .dataset_writer import ProcessResult, ID_FIELD
+from . import generate_main
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +42,7 @@ def parse_args_and_run():
     parser.add_argument("--debug-instrumentation", default=False, action="store_true")
 
     args = parser.parse_args()
-    main(args)
+    generate_main.main(args, process_module_wrapper)
 
 
 def main(args):
@@ -103,13 +103,9 @@ def process_module(args, idx, data):
         num_loops = data["num_loops"]
         assert num_loops > 0
 
-        if False:
-            entries = []
-            for i in range(num_loops):
-                entries.append("__llvm_extracted_loop." + str(i))
-        if True:
-            assert num_loops == 1
-            entries = ["__llvm_extracted_loop"]
+        entries = []
+        for i in range(num_loops):
+            entries.append("__llvm_extracted_loop." + str(i))
 
         with InputGenGenerate(
             data["module"],
@@ -161,7 +157,7 @@ def process_module(args, idx, data):
 
         logger.debug(data)
 
-        del data["id"]
+        del data[ID_FIELD]
         return ProcessResult(idx, [data])
 
     except InputGenInstrumentationError as e:
