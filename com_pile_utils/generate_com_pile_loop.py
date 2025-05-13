@@ -41,7 +41,7 @@ def parse_args_and_run():
     parser.add_argument("--debug", default=False, action="store_true")
 
     args = parser.parse_args()
-    generate_main.main(args, process_module_wrapper)
+    generate_main.main(args, process_module_wrapper, process_module)
 
 
 @ray.remote

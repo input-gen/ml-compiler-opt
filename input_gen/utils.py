@@ -131,6 +131,15 @@ class InputGenUtils:
         self.working_dir = working_dir
         self.temp_dir_arg = temp_dir
 
+    def __enter__(self):
+        try:
+            self.prepare_utils()
+            self.prepare()
+        except InputGenError as e:
+            self.cleanup()
+            raise e
+        return self
+
     def prepare_utils(self):
         if self.working_dir is not None:
             self.temp_dir = None
@@ -324,11 +333,6 @@ class InputGenReplay(InputGenUtils):
 
         super().__init__(working_dir, save_temps, mclang, mllvm, temp_dir, compile_timeout)
 
-    def __enter__(self):
-        self.prepare_utils()
-        self.prepare()
-        return self
-
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.cleanup()
 
@@ -421,11 +425,6 @@ class InputGenGenerate(InputGenUtils):
         self.repl_mod = None
 
         super().__init__(working_dir, save_temps, mclang, mllvm, temp_dir, compile_timeout)
-
-    def __enter__(self):
-        self.prepare_utils()
-        self.prepare()
-        return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.cleanup()

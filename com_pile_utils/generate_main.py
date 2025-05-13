@@ -4,7 +4,7 @@ from .dataset_reader import DatasetReader
 from .dataset_writer import DatasetWriter, ID_FIELD
 
 
-def main(args, process_module_wrapper):
+def main(args, process_module_wrapper, process_module):
     if args.debug:
         logging.basicConfig(level=logging.DEBUG)
     else:
