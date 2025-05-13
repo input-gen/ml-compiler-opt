@@ -103,9 +103,13 @@ def process_module(args, idx, data):
         num_loops = data["num_loops"]
         assert num_loops > 0
 
-        entries = []
-        for i in range(num_loops):
-            entries.append("__llvm_extracted_loop." + str(i))
+        if False:
+            entries = []
+            for i in range(num_loops):
+                entries.append("__llvm_extracted_loop." + str(i))
+        if True:
+            assert num_loops == 1
+            entries = ["__llvm_extracted_loop"]
 
         with InputGenGenerate(
             data["module"],

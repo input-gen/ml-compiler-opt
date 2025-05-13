@@ -18,7 +18,8 @@ import logging
 
 from datasets import load_dataset
 
-from dataset_writer import DatasetWriter, ProcessResult
+from .dataset_writer import DatasetWriter, ProcessResult
+from .dataset_reader import DatasetReader
 
 logger = logging.getLogger(__name__)
 
@@ -33,16 +34,29 @@ def parse_args_and_run():
 
     parser.add_argument("--dataset", required=True)
     parser.add_argument("--output-dataset", required=True)
-    parser.add_argument("--output-dataset-json", default=None)
-    parser.add_argument("--begin", default=0, type=int)
-    parser.add_argument("--end", default=None, type=int)
+
+    parser.add_argument("--one", type=int, default=None)
+
+    parser.add_argument("--debug", default=False, action="store_true")
 
     args = parser.parse_args()
 
-    ds = load_dataset(os.path.join(args.dataset, args.language), split="train", streaming=True)
+    main(args)
 
-    dw = DatasetWriter(args.output_dataset, args.output_dataset_json, args.begin, args.end)
-    dw.process(ds, process_module_wrapper, args)
+
+def main(args):
+    if args.debug:
+        logging.basicConfig(level=logging.DEBUG)
+    else:
+        logging.basicConfig(level=logging.INFO)
+
+    with DatasetReader(args.dataset) as dr:
+        if args.one is None:
+            with DatasetWriter(args.output_dataset) as dw:
+                dw.process(dr.get_iter(), process_module_wrapper, args)
+        else:
+            it = dr.get_one_iter(args.one)
+            process_module(args, args.one, next(it)[1])
 
 
 @ray.remote
@@ -90,7 +104,7 @@ def process_module_in_dir(module, language, idx, temp_outdir):
             logger.debug(outs.decode("utf-8"))
             logger.debug("errs")
             logger.debug(errs.decode("utf-8"))
-            return None
+            return ProcessResult(idx, None)
 
     dfs = []
     i = 0
@@ -107,6 +121,7 @@ def process_module_in_dir(module, language, idx, temp_outdir):
 
             data["language_in_compile"] = language
             data["module"] = loop_module
+            data["num_loops"] = 1
 
             size_estimate += len(loop_module)
 
@@ -119,7 +134,7 @@ def process_module_in_dir(module, language, idx, temp_outdir):
 
     logger.debug(f"len {len(dfs)}")
     if len(dfs) == 0:
-        return None
+        return ProcessResult(idx, [])
 
     return ProcessResult(idx, dfs)
 
