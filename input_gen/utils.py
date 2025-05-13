@@ -475,8 +475,12 @@ class InputGenGenerate(InputGenUtils):
             env["INPUTGEN_INT_MIN"] = str(int_min)
             env["INPUTGEN_INT_MAX"] = str(int_max)
             outs, errs = self.get_output(cmd, env=env, timeout=timeout)
-            outs = outs.decode("utf-8")
-            errs = errs.decode("utf-8")
+            try:
+                outs = outs.decode("utf-8")
+                errs = errs.decode("utf-8")
+            except UnicodeDecodeError as e:
+                logger.debug(e)
+                return []
 
             logger.debug(f"Outs: {outs}")
             logger.debug(f"Errs: {errs}")
