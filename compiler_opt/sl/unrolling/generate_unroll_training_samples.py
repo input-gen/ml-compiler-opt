@@ -388,6 +388,7 @@ def get_ud_sample_from_raw(
 
         return UnrollDecisionTrainingSample(x, np.array(y))
 
+
 def get_ud_sample_from_raw(
     udrs,
     relative_ci_threshold=RELATIVE_CI_THRESHOLD,
@@ -426,7 +427,7 @@ def get_have_valid_runtime_array(abrs: List[AdaptiveBenchmarkingResult]):
 
 
 def get_have_invalid_runtime_array(abrs: List[AdaptiveBenchmarkingResult]):
-    return np.array(map(lambda x: not x.is_invalid(), abrs), dtype=bool)
+    return np.array(map(lambda x: x.is_invalid(), abrs), dtype=bool)
 
 
 def get_maybe_non_zero_runtime_array(abrs: List[AdaptiveBenchmarkingResult]):
@@ -451,7 +452,7 @@ def generate_samples(decision_results, inputs: List[List], replay_options, args,
             logger.debug(f"Match {f}")
             return f
 
-    def get_module_runtimes(module, maybe_non_zero_runtime=None):
+    def get_module_runtimes(module, maybe_non_zero_runtime=None, invalid_runtime=None):
         NUM_REPLAYS = None
         TIMEOUT = 1
 
@@ -464,7 +465,11 @@ def generate_samples(decision_results, inputs: List[List], replay_options, args,
                     f"Starting replaying for entry {entry_no} with {len(entry_inputs)} inputs"
                 )
                 for input_no, inpt in enumerate(entry_inputs):
-                    if maybe_non_zero_runtime is None or maybe_non_zero_runtime[i]:
+                    if maybe_non_zero_runtime is not None and not maybe_non_zero_runtime[i]:
+                        res = get_zero_rt_abr()
+                    elif invalid_runtime is not None and invalid_runtime[i]:
+                        res = get_invalid_abr()
+                    else:
                         try:
                             it = igr.replay_input(
                                 inpt.data, inpt.entry_no, NUM_REPLAYS, timeout=TIMEOUT
@@ -472,8 +477,6 @@ def generate_samples(decision_results, inputs: List[List], replay_options, args,
                             res = adaptive_benchmark(map(get_rt_from_replay_res, it), logger=logger)
                         except InputGenError as e:
                             res = get_invalid_abr()
-                    else:
-                        res = get_zero_rt_abr()
                     rtss.append(res)
                     i += 1
 
@@ -481,12 +484,14 @@ def generate_samples(decision_results, inputs: List[List], replay_options, args,
 
         return rtss
 
-    def get_udr_runtimes(ufr: UnrollFactorResult, maybe_non_zero_runtime=None):
+    def get_udr_runtimes(ufr: UnrollFactorResult, maybe_non_zero_runtime=None, invalid_runtime=None):
         logger.debug(f"Getting runtime for ufr action {ufr.action}, factor {ufr.factor}")
         if ufr.action or ufr.factor == 1:
             try:
                 return UnrollFactorRuntimes(
-                    ufr.factor, True, get_module_runtimes(ufr.module, maybe_non_zero_runtime)
+                    ufr.factor,
+                    True,
+                    get_module_runtimes(ufr.module, maybe_non_zero_runtime, invalid_runtime),
                 )
             except InputGenError as e:
                 logger.debug(e)
@@ -502,16 +507,14 @@ def generate_samples(decision_results, inputs: List[List], replay_options, args,
         maybe_non_zero_runtime = np.ones(num_inputs, dtype=bool)
         # For each input, whether we have encountered an invalid runtime
         # already. In such cases, we don't need to benchmark any more factors.
-        have_invalid_runtime = np.zeros(num_inputs, dtype=bool)
+        invalid_runtime = np.zeros(num_inputs, dtype=bool)
         # TODO maybe we can use this to give some leeway for subsequent factor
         # benchmarking if we were on the edge of replay timeout.
         # have_valid_runtime = np.zeros(num_inputs, dtype=bool)
         for ufr in ud.results:
-            ufrt = get_udr_runtimes(ufr, maybe_non_zero_runtime)
-            runtimes[ufrt.factor - UNROLL_FACTOR_OFFSET + 1] = ufrt.benchmarking_results
-            this_maybe_non_zero_runtime = get_maybe_non_zero_runtime_array(
-                ufrt.benchmarking_results
-            )
+            ufrt = get_udr_runtimes(ufr, maybe_non_zero_runtime, invalid_runtime)
+            runtimes[ufrt.factor - UNROLL_FACTOR_OFFSET + 1] = ufrt
+            this_maybe_non_zero_runtime = get_maybe_non_zero_runtime_array(ufrt.benchmarking_results)
             assert (
                 maybe_non_zero_runtime.shape == this_maybe_non_zero_runtime.shape
                 and maybe_non_zero_runtime.dtype == bool
@@ -525,15 +528,13 @@ def generate_samples(decision_results, inputs: List[List], replay_options, args,
             # have_valid_runtime |= this_have_valid_runtime
 
             if ufrt.action:
-                this_have_invalid_runtime = get_have_invalid_runtime_array(
-                    ufrt.benchmarking_results
-                )
-                have_invalid_runtime |= this_have_invalid_runtime
+                this_have_invalid_runtime = get_have_invalid_runtime_array(ufrt.benchmarking_results)
+                invalid_runtime |= this_have_invalid_runtime
 
             if all(~maybe_non_zero_runtime):
                 logger.debug("Failed to obtain non-0 runtime")
                 return None
-            if all(have_invalid_runtime):
+            if all(invalid_runtime):
                 logger.debug("Failed to obtain non-0 runtime")
                 return None
 
@@ -551,64 +552,6 @@ def generate_samples(decision_results, inputs: List[List], replay_options, args,
         logger.debug(f"Got base_runtime {base_runtime}")
 
         return UnrollDecisionRawSample(x, runtimes[0], runtimes[1:])
-
-    def get_ud_raw_sample(ud: UnrollDecision):
-        x = ud.features
-        factor_runtimes = [None for _ in range(ADVICE_TENSOR_LEN)]
-        maybe_non_zero_runtime = np.ones(num_inputs, dtype=bool)
-        have_valid_runtime = np.zeros(num_inputs, dtype=bool)
-        for ufr in ud.results:
-            if ufr.factor != 1:
-                ufrt = get_udr_runtimes(ufr, maybe_non_zero_runtime)
-                assert ufrt.factor >= 2
-                factor_runtimes[ufrt.factor - UNROLL_FACTOR_OFFSET] = ufrt.benchmarking_results
-                this_maybe_non_zero_runtime = get_maybe_non_zero_runtime_array(
-                    ufrt.benchmarking_results
-                )
-                assert (
-                    maybe_non_zero_runtime.shape == this_maybe_non_zero_runtime.shape
-                    and maybe_non_zero_runtime.dtype == bool
-                    and this_maybe_non_zero_runtime.dtype == bool
-                )
-                maybe_non_zero_runtime &= this_maybe_non_zero_runtime
-
-                this_have_valid_runtime = get_have_valid_runtime_array(
-                    ufrt.benchmarking_results
-                )
-                have_valid_runtime |= this_have_valid_runtime
-
-                if all(~maybe_non_zero_runtime):
-                    logger.debug("Failed to obtain non-0 runtime")
-                    return None
-
-        logger.debug(f"Got factor_runtimes {factor_runtimes}")
-
-        assert all(factor_runtime is not None for factor_runtime in factor_runtimes), "Missing unroll factors"
-
-        if not any(have_valid_runtime):
-            logger.debug("Failed to obtain runtime for any factor")
-            return None
-
-        if all(not factor_runtime.action for factor_runtime in factor_runtimes):
-            logger.debug("Failed to get action for any factor")
-            return None
-
-        # If we have any factor runtime to compare to, also get the base runtime
-        base_runtime = None
-        for ufr in ud.results:
-            if ufr.factor == 1:
-                ufrt = get_udr_runtimes(ufr, maybe_non_zero_runtime)
-                base_runtime = ufrt
-                break
-        assert base_runtime is not None, "Missing baseline"
-        assert base_runtime.action, "Action has to be true on the base"
-        if all(map(abr.is_invalid(),
-            logger.debug("Failed to obtain runtime for base")
-            return None
-
-        logger.debug(f"Got base_runtime {base_runtime}")
-
-        return UnrollDecisionRawSample(x, base_runtime, factor_runtimes)
 
     raw_samples = filter_none(map(get_ud_raw_sample, decision_results))
     if raw:
