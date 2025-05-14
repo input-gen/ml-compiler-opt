@@ -7,7 +7,9 @@ import pandas
 from statistics import geometric_mean
 
 from .unroll_model import ADVICE_TENSOR_LEN, UNROLL_FACTOR_OFFSET, MAX_UNROLL_FACTOR
+from .datastructures import UnrollDecisionRawSample, UnrollDecisionTrainingSample
 from com_pile_utils.dataset_reader import DatasetReader
+from . import *
 
 logger = logging.getLogger(__name__)
 
@@ -51,13 +53,27 @@ def speedup_metric(y_true, y_pred):
     return geometric_mean(oracle_speedups), geometric_mean(predicted_speedups)
 
 
-def convert_data_to_df(data):
+def convert_data_to_df(
+    data,
+    relative_ci_threshold=generate_unroll_training_samples.RELATIVE_CI_THRESHOLD,
+):
     features_spec = data["features_spec"]
     advice_spec = data["advice_spec"]
     samples = data["samples"]
 
     flattened_samples = []
     for sample in samples:
+        if isinstance(sample, UnrollDecisionRawSample):
+            sample = generate_unroll_training_samples.get_ud_sample_from_raw(
+                sample, relative_ci_threshold
+            )
+            if sample is None:
+                continue
+        elif isinstance(sample, UnrollDecisionTrainingSample):
+            pass
+        else:
+            assert False
+
         flattened_features = np.concatenate(sample.features + [sample.advice])
         flattened_samples.append(flattened_features)
 
@@ -79,16 +95,17 @@ def get_data(dataset):
         return [d for _, d in dr.get_iter()]
 
 
-def get_df(dataset):
+def get_df(
+    dataset,
+    relative_ci_threshold=generate_unroll_training_samples.RELATIVE_CI_THRESHOLD,
+):
     logger.info("Loading dataset...")
     datas = get_data(dataset)
     logger.info("Done.")
     logger.info("Converting data...")
-    datas = [convert_data_to_df(data) for data in datas]
-    print()
-    logger.info("Done.")
-    unroll_df = pd.concat(datas)
+    unroll_df = pd.concat(map(lambda x: convert_data_to_df(x, relative_ci_threshold), datas))
     unroll_df = unroll_df.reset_index(drop=True).astype(float)
+    logger.info("Done.")
     return unroll_df
 
 

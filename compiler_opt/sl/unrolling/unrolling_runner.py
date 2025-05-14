@@ -94,7 +94,7 @@ def make_response_for_factor(factor: int):
 
 
 @dataclasses.dataclass(frozen=True)
-class UnrollDecisionResult:
+class UnrollFactorResult:
     factor: int
     action: bool
     module: bytes
@@ -103,7 +103,7 @@ class UnrollDecisionResult:
 @dataclasses.dataclass(frozen=True)
 class UnrollDecision:
     features: List
-    results: List[UnrollDecisionResult]
+    results: List[UnrollFactorResult]
 
 
 @dataclasses.dataclass(frozen=True)
@@ -248,7 +248,7 @@ class UnrollCompilerHost:
                 if cr is None:
                     break
                 out_module = cr.module
-                decision_results.append(UnrollDecisionResult(factor, self.cur_action, out_module))
+                decision_results.append(UnrollFactorResult(factor, self.cur_action, out_module))
             else:
                 # If we did not break the above loop
                 ud = UnrollDecision(self.features[decision], decision_results)

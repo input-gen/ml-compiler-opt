@@ -19,9 +19,9 @@ from com_pile_utils.dataset_writer import DatasetWriter, ProcessResult
 from com_pile_utils.dataset_reader import DatasetReader
 
 from . import unrolling_runner
-from .unrolling_runner import UnrollDecisionResult, UnrollDecision
+from .unrolling_runner import UnrollFactorResult, UnrollDecision
 from .unroll_model import ADVICE_TENSOR_LEN, UNROLL_FACTOR_OFFSET, MAX_UNROLL_FACTOR
-from .datastructures import UnrollDecisionRawSample, UnrollDecisionTrainingSample
+from .datastructures import *
 
 logger = logging.getLogger(__name__)
 
@@ -100,13 +100,6 @@ def get_physical_cores():
     return mapping
 
 
-@dataclasses.dataclass(frozen=True)
-class UnrollDecisionRuntime:
-    factor: int
-    runtime: Optional[np.array]
-    ci: Optional[np.array]
-
-
 @ray.remote(num_cpus=0, resources={PHYSICAL_CORE_RESOURCE: 1})
 def get_physical_cpu_mapping():
     return get_physical_cores()
@@ -156,7 +149,8 @@ def process_module_impl_results(args, idx, data):
             logger.debug(f"Wrote tmp module to {tmp.name}")
     dump_llvm = args.dump_llvm
     inputs = data["inputs"]
-    if len(inputs) == 0:
+    num_inputs = sum(map(len, inputs))
+    if num_inputs == 0:
         logger.debug("No inputs")
         return None
     # Let's allow invalid? replays just in case.
@@ -244,6 +238,25 @@ CONFIDENCE = 0.95
 RELATIVE_CI_THRESHOLD = 0.05
 
 
+def get_benchmarking_mean_ci(samples, confidence):
+    if len(samples) == 0:
+        return np.nan, np.inf
+    if len(samples) == 1:
+        return samples[0], np.inf
+
+    sample_mean = np.mean(samples)
+    sample_std = np.std(samples, ddof=1)  # sample std (unbiased)
+
+    # t critical value
+    n = len(samples)
+    alpha = 1 - confidence
+    t_crit = stats.t.ppf(1 - alpha / 2, df=n - 1)
+
+    margin_error = t_crit * (sample_std / np.sqrt(n))
+    relative_ci_width = (2 * margin_error) / sample_mean
+    return sample_mean, relative_ci_width
+
+
 def adaptive_benchmark(
     iterator,
     initial_samples=INITIAL_SAMPLES,
@@ -251,7 +264,8 @@ def adaptive_benchmark(
     max_samples=MAX_SAMPLES,
     confidence=CONFIDENCE,
     relative_ci_threshold=RELATIVE_CI_THRESHOLD,
-    logger=logging.getLogger(__name__ + ".adaptive_benchmark"),
+    logger=logger,
+    fail_on_non_convergence=False,
 ):
     """
     Adaptive benchmarking loop to estimate mean runtime with confidence.
@@ -265,8 +279,9 @@ def adaptive_benchmark(
         relative_ci_threshold: Target relative CI width (e.g., 0.05 means CI width < 5% of mean).
 
     Returns:
-        mean_estimate, ci_half_width, num_samples
+        AdaptiveBenchmarkingResult
     """
+    assert max_initial_samples < max_samples
 
     logger.debug("Starting adaptive benchmarking")
 
@@ -274,45 +289,43 @@ def adaptive_benchmark(
 
     n = 0
     while len(samples) < initial_samples and n < max_initial_samples:
-        n += 1
         new_sample = next(iterator)
         if new_sample is not None:
-            if new_sample == 0:
-                logger.debug(f"Got zero")
-                return 0, 0
+            new_sample = float(new_sample)
             samples = np.append(samples, new_sample)
+            if n == 0 and new_sample == 0:
+                logger.debug(f"Got zero")
+                return get_zero_rt_abr()
             logger.debug(f"Obtained sample {new_sample}, len {len(samples)}")
+        n += 1
 
     if len(samples) < initial_samples:
         logger.debug(f"Too many replay failures")
-        return np.nan, np.nan
+        sample_mean, relative_ci_width = get_benchmarking_mean_ci(samples, confidence)
+        return AdaptiveBenchmarkingResult(samples, sample_mean, relative_ci_width, False)
+
+    assert n < max_samples
 
     while n < max_samples:
-        sample_mean = np.mean(samples)
-        sample_std = np.std(samples, ddof=1)  # sample std (unbiased)
+        sample_mean, relative_ci_width = get_benchmarking_mean_ci(samples, confidence)
 
-        # t critical value
-        alpha = 1 - confidence
-        t_crit = stats.t.ppf(1 - alpha / 2, df=n - 1)
-
-        margin_error = t_crit * (sample_std / np.sqrt(n))
-        relative_ci_width = (2 * margin_error) / sample_mean
-
-        # Check stopping criterion
         if relative_ci_width < relative_ci_threshold:
             logger.debug(f"Converged: mean {sample_mean}, ci {relative_ci_width}")
-            return sample_mean, relative_ci_width
+            return AdaptiveBenchmarkingResult(samples, sample_mean, relative_ci_width, True)
 
-        # Get another sample
         new_sample = None
         while new_sample is None and n < max_samples:
             new_sample = next(iterator)
             n += 1
         if new_sample is not None:
-            samples = np.append(samples, new_sample)
+            samples = np.append(samples, float(new_sample))
 
-    logger.debug(f"Could not converge: mean {sample_mean}, ci {relative_ci_width}")
-    return np.nan, np.nan
+    logger.debug(f"Did not converge: mean {sample_mean}, ci {relative_ci_width}")
+
+    if fail_on_non_convergence:
+        return get_invalid_abr()
+    else:
+        return AdaptiveBenchmarkingResult(samples, sample_mean, relative_ci_width, False)
 
 
 def invalidate_high_variance_rts(
@@ -339,7 +352,7 @@ def get_speedup_factor(base: np.array, opt: np.array):
 def get_ud_sample_from_raw(
     udrs,
     relative_ci_threshold=RELATIVE_CI_THRESHOLD,
-    logger=logging.getLogger(__name__ + ".get_ud_sample_from_raw"),
+    logger=logger,
 ):
     x = udrs.features
     base_runtime = udrs.base_runtime
@@ -369,10 +382,20 @@ def filter_none(l):
     return filter(lambda x: x is not None, l)
 
 
-def generate_samples(decision_results, inputs, replay_options, args, raw=True):
+def get_maybe_non_zero_runtime_array(abrs: List[AdaptiveBenchmarkingResult]):
+    non_zero_runtime = np.ones(len(abrs), dtype=bool)
+    for i, abr in enumerate(abrs):
+        if abr.is_zero_rt():
+            non_zero_runtime[i] = 0
+    return non_zero_runtime
+
+
+def generate_samples(decision_results, inputs: List[List], replay_options, args, raw=True):
     logger = logging.getLogger(__name__ + ".generate_samples")
     if args.debug or args.debug_profiling:
         logger.setLevel(level=logging.DEBUG)
+
+    num_inputs = sum(map(len, inputs))
 
     def get_rt_from_replay_res(res):
         logger.debug(f"Res {res}")
@@ -385,16 +408,11 @@ def generate_samples(decision_results, inputs, replay_options, args, raw=True):
             logger.debug(f"Match {f}")
             return f
 
-    def get_module_runtimes(module, is_non_zero_runtime=None):
+    def get_module_runtimes(module, maybe_non_zero_runtime=None):
         NUM_REPLAYS = None
         TIMEOUT = 1
 
-        num_inputs = 0
-        for entry_inputs in inputs:
-            num_inputs += len(entry_inputs)
-
-        rts = np.zeros(num_inputs, dtype=float)
-        cis = np.zeros(num_inputs, dtype=float)
+        rtss = []
         i = 0
         with InputGenReplay(module, **replay_options) as igr:
             logger.debug(f"Starting replaying {len(inputs)} entries")
@@ -403,59 +421,57 @@ def generate_samples(decision_results, inputs, replay_options, args, raw=True):
                     f"Starting replaying for entry {entry_no} with {len(entry_inputs)} inputs"
                 )
                 for input_no, inpt in enumerate(entry_inputs):
-                    if is_non_zero_runtime is None or is_non_zero_runtime[i]:
+                    if maybe_non_zero_runtime is None or maybe_non_zero_runtime[i]:
                         try:
                             it = igr.replay_input(
                                 inpt.data, inpt.entry_no, NUM_REPLAYS, timeout=TIMEOUT
                             )
-                            rt, ci = adaptive_benchmark(map(get_rt_from_replay_res, it), logger=logger)
+                            res = adaptive_benchmark(map(get_rt_from_replay_res, it), logger=logger)
                         except InputGenError as e:
-                            rt = np.nan
-                            ci = np.nan
-                        rts[i] = rt
-                        cis[i] = ci
+                            res = get_invalid_abr()
                     else:
-                        rts[i] = 0
-                        cis[i] = 0
+                        res = get_zero_rt_abr()
+                    rtss.append(res)
                     i += 1
 
-        assert i == num_inputs
+        assert len(rtss) == num_inputs and i == num_inputs
 
-        return rts, cis
+        return rtss
 
-    def get_udr_runtime(udr: UnrollDecisionResult, is_non_zero_runtime=None):
-        logger.debug(f"Getting runtime for udr action {udr.action}, factor {udr.factor}")
-        if udr.action or udr.factor == 1:
+    def get_udr_runtimes(ufr: UnrollFactorResult, maybe_non_zero_runtime=None):
+        logger.debug(f"Getting runtime for ufr action {ufr.action}, factor {ufr.factor}")
+        if ufr.action or ufr.factor == 1:
             try:
-                return UnrollDecisionRuntime(
-                    udr.factor, *get_module_runtimes(udr.module, is_non_zero_runtime)
+                return UnrollFactorRuntimes(
+                    ufr.factor, get_module_runtimes(ufr.module, maybe_non_zero_runtime)
                 )
             except InputGenError as e:
                 logger.debug(e)
-        return UnrollDecisionRuntime(udr.factor, None, None)
+        return UnrollFactorRuntimes(ufr.factor, [get_invalid_abr() for _ in range(num_inputs)])
 
     def get_ud_raw_sample(ud: UnrollDecision):
         x = ud.features
         factor_runtimes = [None for _ in range(ADVICE_TENSOR_LEN)]
-        factor_cis = [None for _ in range(ADVICE_TENSOR_LEN)]
-        is_non_zero_runtime = None
-        for udr in ud.results:
-            if udr.factor != 1:
-                udrt = get_udr_runtime(udr, is_non_zero_runtime)
-                assert udrt.factor >= 2
-                factor_runtimes[udrt.factor - UNROLL_FACTOR_OFFSET] = udrt.runtime
-                factor_cis[udrt.factor - UNROLL_FACTOR_OFFSET] = udrt.ci
-                if is_non_zero_runtime is None:
-                    if udrt.runtime is not None:
-                        is_non_zero_runtime = udrt.runtime.astype(bool)
-                else:
-                    is_non_zero_runtime = is_non_zero_runtime & udrt.runtime.astype(bool)
-                if is_non_zero_runtime is not None and all(~is_non_zero_runtime):
+        maybe_non_zero_runtime = np.ones(num_inputs, dtype=bool)
+        for ufr in ud.results:
+            if ufr.factor != 1:
+                ufrt = get_udr_runtimes(ufr, maybe_non_zero_runtime)
+                assert ufrt.factor >= 2
+                factor_runtimes[ufrt.factor - UNROLL_FACTOR_OFFSET] = ufrt.benchmarking_results
+                this_maybe_non_zero_runtime = get_maybe_non_zero_runtime_array(
+                    ufrt.benchmarking_results
+                )
+                assert (
+                    maybe_non_zero_runtime.shape == this_maybe_non_zero_runtime.shape
+                    and maybe_non_zero_runtime.dtype == bool
+                    and this_maybe_non_zero_runtime.dtype == bool
+                )
+                maybe_non_zero_runtime &= this_maybe_non_zero_runtime
+                if all(~maybe_non_zero_runtime):
                     logger.debug("Failed to obtain non-0 runtime")
                     return None
 
         logger.debug(f"Got factor_runtimes {factor_runtimes}")
-        logger.debug(f"Got factor_cis {factor_cis}")
 
         # If none of the factors succeeded.
         if all(factor_runtime is None for factor_runtime in factor_runtimes):
@@ -464,18 +480,18 @@ def generate_samples(decision_results, inputs, replay_options, args, raw=True):
 
         # If we have any factor runtime to compare to, also get the base runtime
         base_runtime = None
-        for udr in ud.results:
-            if udr.factor == 1:
-                udrt = get_udr_runtime(udr, is_non_zero_runtime)
-                base_runtime = udrt.runtime
-                base_ci = udrt.ci
-                if base_runtime is None:
-                    logger.debug("Failed to obtain runtime for base")
-                    return None
+        for ufr in ud.results:
+            if ufr.factor == 1:
+                ufrt = get_udr_runtimes(ufr, maybe_non_zero_runtime)
+                base_runtime = ufrt.benchmarking_results
+                break
+        if base_runtime is None:
+            logger.debug("Failed to obtain runtime for base")
+            return None
 
         logger.debug(f"Got base_runtime {base_runtime}")
 
-        return UnrollDecisionRawSample(x, base_runtime, base_ci, factor_runtimes, factor_cis)
+        return UnrollDecisionRawSample(x, base_runtime, factor_runtimes)
 
     raw_samples = filter_none(map(get_ud_raw_sample, decision_results))
     if raw:
