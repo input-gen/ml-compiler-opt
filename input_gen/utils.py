@@ -81,11 +81,17 @@ class InputGenTimeout(InputGenError):
 def log_output(outs, errs):
     logger.debug("Logging output")
     if outs is not None:
-        outs = outs.decode("utf-8")
-        logger.debug(f"Outs: {outs}")
+        try:
+            outs = outs.decode("utf-8")
+            logger.debug(f"Outs: {outs}")
+        except:
+            logger.debug(f"Failed to decode stdout.")
     if outs is not None:
-        errs = errs.decode("utf-8")
-        logger.debug(f"Errs: {errs}")
+        try:
+            errs = errs.decode("utf-8")
+            logger.debug(f"Errs: {errs}")
+        except:
+            logger.debug(f"Failed to decode stderr.")
 
 
 def terminate_proc_sns(proc):
@@ -228,11 +234,17 @@ class InputGenUtils:
                 logger.debug(f"Exit with status {status}")
                 logger.debug(f"cmd: {' '.join(cmd)}")
                 logger.debug(f"output:")
-                errs_decoded = errs.decode("utf-8")
-                logger.debug(errs_decoded)
-
+                try:
+                    errs = errs.decode("utf-8")
+                except:
+                    errs = ""
+                try:
+                    outs = outs.decode("utf-8")
+                except:
+                    outs = ""
+                logger.debug(errs)
                 logger.debug("Failed.")
-                raise ExecFailTy(cmd, outs.decode("utf-8"), errs_decoded)
+                raise ExecFailTy(cmd, outs, errs)
 
             logger.debug("Finished.")
             return outs, errs
@@ -397,8 +409,11 @@ class InputGenReplay(InputGenUtils):
                 break
             outs, errs = self.get_output(cmd, allow_fail=True, timeout=timeout)
             timers = dict()
-            for timer_name, timer_time in RE_MATCH_TIMER.findall(errs.decode("utf-8")):
-                timers[timer_name] = int(timer_time)
+            try:
+                for timer_name, timer_time in RE_MATCH_TIMER.findall(errs.decode("utf-8")):
+                    timers[timer_name] = int(timer_time)
+            except UnicodeDecodeError:
+                raise InputGenError("Could not decode output")
             yield ReplayResult(outs, errs, timers)
             i += 1
 
