@@ -9,7 +9,8 @@ from statistics import geometric_mean
 from .unroll_model import ADVICE_TENSOR_LEN, UNROLL_FACTOR_OFFSET, MAX_UNROLL_FACTOR
 from .datastructures import UnrollDecisionRawSample, UnrollDecisionTrainingSample
 from com_pile_utils.dataset_reader import DatasetReader
-from . import *
+from . import generate_unroll_training_samples
+
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +56,7 @@ def speedup_metric(y_true, y_pred):
 
 def convert_data_to_df(
     data,
+    confidence=generate_unroll_training_samples.CONFIDENCE,
     relative_ci_threshold=generate_unroll_training_samples.RELATIVE_CI_THRESHOLD,
 ):
     features_spec = data["features_spec"]
@@ -65,7 +67,7 @@ def convert_data_to_df(
     for sample in samples:
         if isinstance(sample, UnrollDecisionRawSample):
             sample = generate_unroll_training_samples.get_ud_sample_from_raw(
-                sample, relative_ci_threshold
+                sample, confidence=0.95, relative_ci_threshold=relative_ci_threshold
             )
             if sample is None:
                 continue
@@ -97,13 +99,16 @@ def get_data(dataset):
 
 def get_df(
     dataset,
+    confidence=generate_unroll_training_samples.CONFIDENCE,
     relative_ci_threshold=generate_unroll_training_samples.RELATIVE_CI_THRESHOLD,
 ):
     logger.info("Loading dataset...")
     datas = get_data(dataset)
     logger.info("Done.")
     logger.info("Converting data...")
-    unroll_df = pd.concat(map(lambda x: convert_data_to_df(x, relative_ci_threshold), datas))
+    unroll_df = pd.concat(
+        map(lambda x: convert_data_to_df(x, confidence, relative_ci_threshold), datas)
+    )
     unroll_df = unroll_df.reset_index(drop=True).astype(float)
     logger.info("Done.")
     return unroll_df

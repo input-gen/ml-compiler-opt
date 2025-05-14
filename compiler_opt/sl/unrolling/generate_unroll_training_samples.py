@@ -10,6 +10,7 @@ import subprocess
 import ray
 import dataclasses
 import numpy as np
+import pandas as pd
 from scipy import stats
 from typing import Dict, Tuple, BinaryIO, Union, List, Optional, Iterable
 
@@ -246,6 +247,9 @@ def get_benchmarking_mean_ci(samples, confidence):
 
     sample_mean = np.mean(samples)
     sample_std = np.std(samples, ddof=1)  # sample std (unbiased)
+    if sample_mean == 0:
+        assert sample_std == 0
+        return 0.0, 0.0
 
     # t critical value
     n = len(samples)
@@ -351,7 +355,7 @@ def get_speedup_factor(base: np.array, opt: np.array):
 def reduce_abr(abr: AdaptiveBenchmarkingResult, confidence, relative_ci_threshold):
     # TODO we should probably get rid of the top-N runtimes
     mean, ci = get_benchmarking_mean_ci(abr.runtimes, confidence)
-    if ci < relative_ci_threshold:
+    if ci > relative_ci_threshold:
         return np.nan
     # TODO should we get the median?
     return mean
@@ -359,63 +363,63 @@ def reduce_abr(abr: AdaptiveBenchmarkingResult, confidence, relative_ci_threshol
 
 def get_ud_sample_from_raw(
     udrs,
+    confidence=0.95,
     relative_ci_threshold=RELATIVE_CI_THRESHOLD,
     logger=logger,
 ):
-    x = udrs.features
-    base_inputs_rt = np.array(map(reduce_abr, udrs.base_benchmarking_results), dtype=float)
-    num_inputs = len(base_rts)
-    # factor_rts = np.full((num_inputs, ADVICE_TENSOR_LEN), np.nan, dtype=float)
+    base_inputs_rt = np.array(
+        list(
+            map(
+                lambda x: reduce_abr(x, confidence, relative_ci_threshold),
+                udrs.base_ufrts.benchmarking_results,
+            )
+        ),
+        dtype=float,
+    )
+    num_inputs = len(base_inputs_rt)
 
-    factors_inputs_rt = []
-    for abr in udrs.factor_benchmarking_results:
-        # factor_rts[i] = map(reduce_abr, udrs.base_benchmarking_results)
-        factor_inputs_rt = np.array(map(reduce_abr, abr), dtype=float)
-        factors_inputs_rt.append(factor_inputs_rt)
+    rts = {}
+    for i, ufrt in enumerate(udrs.factors_ufrts):
+        assert ufrt.factor == UNROLL_FACTOR_OFFSET + i
+        if ufrt.action:
+            factor_inputs_rt = np.array(
+                list(
+                    map(
+                        lambda x: reduce_abr(x, confidence, relative_ci_threshold),
+                        ufrt.benchmarking_results,
+                    )
+                ),
+                dtype=float,
+            )
+            rts[ufrt.factor] = factor_inputs_rt
+    assert len(rts) > 0
+    rts[1] = base_inputs_rt
 
-    with np.errstate(divide="ignore", invalid="ignore"):
-        # Obtain speedup factors for all unroll factors.
-        # Encode failure to unroll as speedup of 0.0.
-        y = [
-            get_speedup_factor(base_inputs_rt, factor_inputs_rt) if factor_rts is not None else 0.0
-            for factor_rts in factor_benchmarking_results
-        ]
+    # Inputs are the rows, and the factors are the columns.
+    df = pd.DataFrame(rts)
 
-        # If we did not manage to obtain a speedup we fail
-        if any(r is None for r in y):
-            logger.debug(f"Failed to obtain speedup for {len([r is None for r in y])}")
-            return None
+    # Drop any inputs where we have zero or nan runtime.
+    df = df[~((df == 0).any(axis=1) | df.isna().any(axis=1))]
+    if len(df) == 0:
+        logger.debug(f"Failed to obtain speedup for any input.")
+        return None
 
-        return UnrollDecisionTrainingSample(x, np.array(y))
+    # Get the speedups relative to factor 1 in each input.
+    for factor in rts.keys():
+        if factor != 1:
+            df[factor] = df[1] / df[factor]
 
+    # Encode inability to unroll (action = False) as speedup = 0.
+    for factor in {i for i in range(UNROLL_FACTOR_OFFSET, MAX_UNROLL_FACTOR + 1)} - rts.keys():
+        df[factor] = 0.0
 
-def get_ud_sample_from_raw(
-    udrs,
-    relative_ci_threshold=RELATIVE_CI_THRESHOLD,
-    logger=logger,
-):
-    x = udrs.features
-    base_runtime = udrs.base_runtime
-    base_ci = udrs.base_ci
-    invalidate_high_variance_rts(base_runtime, base_ci, relative_ci_threshold)
-    factor_runtimes = udrs.factor_runtimes
-    factor_cis = udrs.factor_cis
-    for rts, cis in zip(factor_runtimes, factor_cis):
-        invalidate_high_variance_rts(rts, cis, relative_ci_threshold)
-    with np.errstate(divide="ignore", invalid="ignore"):
-        # Obtain speedup factors for all unroll factors.
-        # Encode failure to unroll as speedup of 0.0.
-        y = [
-            get_speedup_factor(base_runtime, factor_runtime) if factor_runtime is not None else 0.0
-            for factor_runtime in factor_runtimes
-        ]
+    # Drop the baseline
+    df.drop(1, axis=1, inplace=True)
 
-        # If we did not manage to obtain a speedup we fail
-        if any(r is None for r in y):
-            logger.debug(f"Failed to obtain speedup for {len([r is None for r in y])}")
-            return None
+    # Get the median speedup for each factor across all inputs.
+    speedups = np.array(df.median(axis=0))
 
-        return UnrollDecisionTrainingSample(x, np.array(y))
+    return UnrollDecisionTrainingSample(udrs.features, speedups)
 
 
 def filter_none(l):
@@ -544,7 +548,7 @@ def generate_samples(decision_results, inputs: List[List], replay_options, args,
 
         assert all(rt is not None for rt in runtimes), "Missing unroll factors"
 
-        if all(not rt.action for rt in runtimes):
+        if all(not rt.action for rt in runtimes[1:]):
             logger.debug("Failed to get action for any factor")
             return None
 

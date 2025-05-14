@@ -47,6 +47,6 @@ class UnrollFactorRuntimes:
 class UnrollDecisionRawSample:
     features: list
     # Benchmarking result for each input
-    base_benchmarking_results: UnrollFactorRuntimes
+    base_ufrts: UnrollFactorRuntimes
     # Benchmarking result for each input for each factor
-    factor_benchmarking_results: List[UnrollFactorRuntimes]
+    factors_ufrts: List[UnrollFactorRuntimes]
