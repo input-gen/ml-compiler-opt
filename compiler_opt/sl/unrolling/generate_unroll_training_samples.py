@@ -73,7 +73,7 @@ def main(args):
             os.sched_setaffinity(0, manager_cpus)
 
             context = ray.init(
-                log_to_driver=False, resources={PHYSICAL_CORE_RESOURCE: physical_cores - 1}
+                log_to_driver=True, resources={PHYSICAL_CORE_RESOURCE: physical_cores - 1}
             )
             args.cpu_mapping = ray.get(get_physical_cpu_mapping.remote())
             assert physical_cores == len(args.cpu_mapping)
@@ -423,15 +423,15 @@ def filter_none(l):
 
 
 def get_have_valid_runtime_array(abrs: List[AdaptiveBenchmarkingResult]):
-    return np.array(map(lambda x: not x.is_invalid(), abrs), dtype=bool)
+    return np.array(list(map(lambda x: not x.is_invalid(), abrs)), dtype=bool)
 
 
 def get_have_invalid_runtime_array(abrs: List[AdaptiveBenchmarkingResult]):
-    return np.array(map(lambda x: x.is_invalid(), abrs), dtype=bool)
+    return np.array(list(map(lambda x: x.is_invalid(), abrs)), dtype=bool)
 
 
 def get_maybe_non_zero_runtime_array(abrs: List[AdaptiveBenchmarkingResult]):
-    return np.array(map(lambda x: not x.is_zero_rt(), abrs), dtype=bool)
+    return np.array(list(map(lambda x: not x.is_zero_rt(), abrs)), dtype=bool)
 
 
 def generate_samples(decision_results, inputs: List[List], replay_options, args, raw=True):
@@ -498,7 +498,10 @@ def generate_samples(decision_results, inputs: List[List], replay_options, args,
                 return UnrollFactorRuntimes(
                     ufr.factor, True, [get_invalid_abr() for _ in range(num_inputs)]
                 )
-        return UnrollFactorRuntimes(ufr.factor, False, [get_invalid_abr() for _ in range(num_inputs)])
+        else:
+            return UnrollFactorRuntimes(
+                ufr.factor, False, [get_invalid_abr() for _ in range(num_inputs)]
+            )
 
     def get_ud_raw_sample(ud: UnrollDecision):
         x = ud.features
@@ -515,11 +518,10 @@ def generate_samples(decision_results, inputs: List[List], replay_options, args,
             ufrt = get_udr_runtimes(ufr, maybe_non_zero_runtime, invalid_runtime)
             runtimes[ufrt.factor - UNROLL_FACTOR_OFFSET + 1] = ufrt
             this_maybe_non_zero_runtime = get_maybe_non_zero_runtime_array(ufrt.benchmarking_results)
-            assert (
-                maybe_non_zero_runtime.shape == this_maybe_non_zero_runtime.shape
-                and maybe_non_zero_runtime.dtype == bool
-                and this_maybe_non_zero_runtime.dtype == bool
-            )
+            assert maybe_non_zero_runtime.shape == (len(ufrt.benchmarking_results),)
+            assert maybe_non_zero_runtime.shape == this_maybe_non_zero_runtime.shape
+            assert maybe_non_zero_runtime.dtype == bool
+            assert this_maybe_non_zero_runtime.dtype == bool
             maybe_non_zero_runtime &= this_maybe_non_zero_runtime
 
             # this_have_valid_runtime = get_have_valid_runtime_array(
@@ -548,8 +550,6 @@ def generate_samples(decision_results, inputs: List[List], replay_options, args,
 
         assert runtimes[0].factor == 1, "Base does not have unroll factor == 1"
         assert runtimes[0].action, "Action has to be true on the base"
-
-        logger.debug(f"Got base_runtime {base_runtime}")
 
         return UnrollDecisionRawSample(x, runtimes[0], runtimes[1:])
 
