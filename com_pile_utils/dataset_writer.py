@@ -223,6 +223,7 @@ class DatasetWriter:
         num_finished_success = 0
         num_finished_fail = 0
         start_time = time.time()
+        cur_time = 0
         time_status_printed = 0
         STATUS_REFRESH_TIME = 3
 
