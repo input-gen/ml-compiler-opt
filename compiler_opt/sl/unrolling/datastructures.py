@@ -6,23 +6,9 @@ from typing import List, Optional
 
 
 @dataclasses.dataclass(frozen=True)
-class UnrollDecisionRawRuntimes:
-    features: list
-    base_runtime: List[np.array]
-    factor_runtimes: List[List[np.array]]
-
-
-@dataclasses.dataclass(frozen=True)
 class UnrollDecisionTrainingSample:
     features: list
     advice: np.array
-
-
-@dataclasses.dataclass(frozen=True)
-class UnrollDecisionRuntime:
-    factor: int
-    runtime: Optional[np.array]
-    ci: Optional[np.array]
 
 
 @dataclasses.dataclass(frozen=True)
@@ -52,6 +38,7 @@ def get_zero_rt_abr():
 @dataclasses.dataclass(frozen=True)
 class UnrollFactorRuntimes:
     factor: int
+    action: bool
     # Benchmarking result for each input
     benchmarking_results: List[AdaptiveBenchmarkingResult]
 
@@ -60,6 +47,6 @@ class UnrollFactorRuntimes:
 class UnrollDecisionRawSample:
     features: list
     # Benchmarking result for each input
-    base_benchmarking_results: List[AdaptiveBenchmarkingResult]
+    base_benchmarking_results: UnrollFactorRuntimes
     # Benchmarking result for each input for each factor
-    factor_benchmarking_results: List[List[AdaptiveBenchmarkingResult]]
+    factor_benchmarking_results: List[UnrollFactorRuntimes]
