@@ -365,6 +365,10 @@ def get_ud_sample_from_raw(
         return UnrollDecisionTrainingSample(x, np.array(y))
 
 
+def filter_none(l):
+    return filter(lambda x: x is not None, l)
+
+
 def generate_samples(decision_results, inputs, replay_options, args, raw=True):
     logger = logging.getLogger(__name__ + ".generate_samples")
     if args.debug or args.debug_profiling:
@@ -473,11 +477,11 @@ def generate_samples(decision_results, inputs, replay_options, args, raw=True):
 
         return UnrollDecisionRawSample(x, base_runtime, base_ci, factor_runtimes, factor_cis)
 
-    raw_samples = filter(lambda x: x is not None, map(get_ud_raw_sample, decision_results))
+    raw_samples = filter_none(map(get_ud_raw_sample, decision_results))
     if raw:
         yield from raw_samples
     else:
-        yield from filter(lambda x: x is not None, map(get_ud_sample_from_raw, raw_samples))
+        yield from filter_none(map(get_ud_sample_from_raw, raw_samples))
 
 
 if __name__ == "__main__":
