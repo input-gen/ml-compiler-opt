@@ -315,21 +315,60 @@ def adaptive_benchmark(
     return np.nan, np.nan
 
 
-def generate_samples(decision_results, inputs, replay_options, args, raw=False):
+def invalidate_high_variance_rts(
+    rts,
+    cis,
+    relative_ci_threshold=RELATIVE_CI_THRESHOLD,
+):
+    if rts is not None:
+        assert cis is not None
+        rts[cis > relative_ci_threshold] = np.nan
+
+
+def get_speedup_factor(base: np.array, opt: np.array):
+    # This will get element wise speedup factors for all inputs where either
+    # succeeded
+    arr = base / opt
+    arr = arr[~np.isnan(arr)]  # remove NaNs
+    if arr.size == 0:
+        return None
+    geomean = np.exp(np.mean(np.log(arr)))
+    return geomean
+
+
+def get_ud_sample_from_raw(
+    udrs,
+    relative_ci_threshold=RELATIVE_CI_THRESHOLD,
+    logger=logging.getLogger(__name__ + ".get_ud_sample_from_raw"),
+):
+    x = udrs.features
+    base_runtime = udrs.base_runtime
+    base_ci = udrs.base_ci
+    invalidate_high_variance_rts(base_runtime, base_ci, relative_ci_threshold)
+    factor_runtimes = udrs.factor_runtimes
+    factor_cis = udrs.factor_cis
+    for rts, cis in zip(factor_runtimes, factor_cis):
+        invalidate_high_variance_rts(rts, cis, relative_ci_threshold)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        # Obtain speedup factors for all unroll factors.
+        # Encode failure to unroll as speedup of 0.0.
+        y = [
+            get_speedup_factor(base_runtime, factor_runtime) if factor_runtime is not None else 0.0
+            for factor_runtime in factor_runtimes
+        ]
+
+        # If we did not manage to obtain a speedup we fail
+        if any(r is None for r in y):
+            logger.debug(f"Failed to obtain speedup for {len([r is None for r in y])}")
+            return None
+
+        return UnrollDecisionTrainingSample(x, np.array(y))
+
+
+def generate_samples(decision_results, inputs, replay_options, args, raw=True):
     logger = logging.getLogger(__name__ + ".generate_samples")
     if args.debug or args.debug_profiling:
         logger.setLevel(level=logging.DEBUG)
-
-    def get_speedup_factor(base: np.array, opt: np.array):
-        # This will get element wise speedup factors for all inputs where either
-        # succeeded
-        arr = base / opt
-        arr = arr[~np.isnan(arr)]  # remove NaNs
-        if arr.size == 0:
-            return None
-        geomean = np.exp(np.mean(np.log(arr)))
-        return geomean
-        # return gmean(arr)
 
     def get_rt_from_replay_res(res):
         logger.debug(f"Res {res}")
@@ -341,25 +380,6 @@ def generate_samples(decision_results, inputs, replay_options, args, raw=False):
             f = int(re_match.group(1))
             logger.debug(f"Match {f}")
             return f
-
-    def get_ud_sample_from_raw(udrs):
-        x = udrs.features
-        base_runtime = udrs.base_runtime
-        factor_runtimes = udrs.factor_runtimes
-        with np.errstate(divide="ignore", invalid="ignore"):
-            # Obtain speedup factors for all unroll factors.
-            # Encode failure to unroll as speedup of 0.0.
-            y = [
-                get_speedup_factor(base_runtime, factor_runtime) if factor_runtime is not None else 0.0
-                for factor_runtime in factor_runtimes
-            ]
-
-            # If we did not manage to obtain a speedup we fail
-            if any(r is None for r in y):
-                logger.debug(f"Failed to obtain speedup for {len([r is None for r in y])}")
-                return None
-
-            return UnrollDecisionTrainingSample(x, np.array(y))
 
     def get_module_runtimes(module, is_non_zero_runtime=None):
         NUM_REPLAYS = None
