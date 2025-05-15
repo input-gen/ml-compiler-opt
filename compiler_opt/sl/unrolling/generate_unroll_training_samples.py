@@ -352,13 +352,79 @@ def get_speedup_factor(base: np.array, opt: np.array):
     return geomean
 
 
+def get_benchmarking_stats(samples, confidence):
+    """
+    returns 2d np.array
+    """
+    remove_ratio_ns = [0, 1, 2, 3, 4]
+    remove_ratio_d = 10
+
+    num_samples = len(samples)
+    num_stats = 4
+    stats = np.empty((len(remove_ratio_ns), num_stats), dtype=float)
+
+    sorted_samples = np.sort(samples)
+
+    for i, remove_ratio_n in enumerate(remove_ratio_ns):
+        num_to_remove = round(remove_ratio_n * num_samples / remove_ratio_d)
+        if num_to_remove == 0:
+            removed_samples = sorted_samples
+        else:
+            removed_samples = sorted_samples[:-num_to_remove]
+        mean, ci = get_benchmarking_mean_ci(removed_samples, confidence)
+        med = np.median(removed_samples)
+        stats[i] = [mean, med, ci, num_samples - num_to_remove]
+
+    return stats
+
+
 def reduce_abr(abr: AdaptiveBenchmarkingResult, confidence, relative_ci_threshold):
-    # TODO we should probably get rid of the top-N runtimes
-    mean, ci = get_benchmarking_mean_ci(abr.runtimes, confidence)
-    if ci > relative_ci_threshold:
-        return np.nan
-    # TODO should we get the median?
-    return mean
+    return get_benchmarking_stats(abr.runtimes, confidence)
+
+
+def get_np_stats_array_from_raw(
+    udrs,
+    confidence=0.95,
+    relative_ci_threshold=RELATIVE_CI_THRESHOLD,
+    logger=logger,
+):
+    base_inputs_rt = np.stack(
+        list(
+            map(
+                lambda x: reduce_abr(x, confidence, relative_ci_threshold),
+                udrs.base_ufrts.benchmarking_results,
+            )
+        ),
+        dtype=float,
+    )
+    num_inputs = len(base_inputs_rt)
+
+    all_ufrts = [udrs.base_ufrts] + udrs.factors_ufrts
+
+    rts = []
+    for i, ufrt in enumerate(all_ufrts):
+        assert ufrt.factor == UNROLL_FACTOR_OFFSET + i - 1
+        if ufrt.action:
+            factor_inputs_rt = np.stack(
+                list(
+                    map(
+                        lambda x: reduce_abr(x, confidence, relative_ci_threshold),
+                        ufrt.benchmarking_results,
+                    )
+                ),
+                dtype=float,
+            )
+            rts.append(factor_inputs_rt)
+        else:
+            assert i != 0
+            np.zeros(rts[0].shape)
+    assert len(rts) == ADVICE_TENSOR_LEN + 1
+
+    # dim 0: factors
+    # dim 1: inputs
+    # dim 2...: stats
+    factors_inputs_stats = np.stack(rts, dtype=float)
+    return factors_inputs_stats
 
 
 def get_ud_sample_from_raw(
