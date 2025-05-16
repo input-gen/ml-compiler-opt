@@ -73,6 +73,8 @@ def convert_data_to_df(
                 continue
         elif isinstance(sample, UnrollDecisionTrainingSample):
             pass
+        elif sample is None:
+            continue
         else:
             assert False
 

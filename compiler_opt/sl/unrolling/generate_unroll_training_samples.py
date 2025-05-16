@@ -368,22 +368,25 @@ def get_benchmarking_stats(samples, confidence):
         else:
             removed_samples = sorted_samples[:-num_to_remove]
         mean, ci = get_benchmarking_mean_ci(removed_samples, confidence)
-        med = np.median(removed_samples)
-        yield (mean, med, ci, num_samples - num_to_remove)
+        if len(removed_samples) > 0:
+            med = np.median(removed_samples)
+        else:
+            med = np.nan
+        yield {"mean": mean, "median": med, "ci": ci, "num": num_samples - num_to_remove}
 
 
-def reduce_abr_min_ci(abr: AdaptiveBenchmarkingResult, confidence, relative_ci_threshold):
+def reduce_abr_min_ci(abr: AdaptiveBenchmarkingResult, confidence):
     it = get_benchmarking_stats(abr.runtimes, confidence)
-    return min(list(it), lambda x: x[2])
+    return min(list(it), key=lambda x: x["ci"] if not np.isnan(x["ci"]) else np.inf)
 
 
 def reduce_abr(abr: AdaptiveBenchmarkingResult, confidence, relative_ci_threshold):
     it = get_benchmarking_stats(abr.runtimes, confidence)
     try:
         while True:
-            mean, med, ci, num = next(it)
-            if ci < relative_ci_threshold:
-                return med
+            res = next(it)
+            if res["ci"] < relative_ci_threshold:
+                return res["med"]
     except StopIteration:
         return np.nan
 
@@ -391,7 +394,8 @@ def reduce_abr(abr: AdaptiveBenchmarkingResult, confidence, relative_ci_threshol
 def get_ud_sample_from_raw(
     udrs,
     confidence=0.95,
-    relative_ci_threshold=RELATIVE_CI_THRESHOLD,
+    relative_ci_threshold_per_sample=RELATIVE_CI_THRESHOLD * 2,
+    relative_ci_threshold_mean=RELATIVE_CI_THRESHOLD,
     logger=logger,
 ):
     all_ufrts = [udrs.base_ufrts] + udrs.factors_ufrts
@@ -400,42 +404,65 @@ def get_ud_sample_from_raw(
     for i, ufrt in enumerate(all_ufrts):
         assert ufrt.factor == UNROLL_FACTOR_OFFSET + i - 1
         if ufrt.action:
-            factor_inputs_rt = np.array(
-                list(
-                    map(
-                        lambda x: reduce_abr(x, confidence, relative_ci_threshold),
-                        ufrt.benchmarking_results,
-                    )
-                ),
-                dtype=float,
+            factor_inputs_rt = list(
+                map(
+                    lambda x: reduce_abr_min_ci(x, confidence),
+                    ufrt.benchmarking_results,
+                )
             )
             rts[ufrt.factor] = factor_inputs_rt
     assert len(rts) > 0
     assert 1 in rts.keys()
+    frames = {factor: pd.DataFrame(inputs) for factor, inputs in rts.items()}
 
     # Inputs are the rows, and the factors are the columns.
-    df = pd.DataFrame(rts)
+    df = pd.concat(frames, axis=1)
+    df.columns.names = ["factor", "stat"]
 
     # Drop any inputs where we have zero or nan runtime.
-    df = df[~((df == 0).any(axis=1) | df.isna().any(axis=1))]
+    medians = df.xs("median", axis=1, level="stat")
+    mask = (medians == 0) | (medians.isna())
+    df = df[~mask.any(axis=1)]
     if len(df) == 0:
-        logger.debug(f"Failed to obtain speedup for any input.")
+        logger.debug(f"Failed to obtain valid runtime for all factors")
         return None
+
+    cis = df.xs("ci", axis=1, level="stat")
+    mask_per_sample = (cis < relative_ci_threshold_per_sample).any(axis=1)
+    cis_mean = cis.mean(axis=1)
+    mask_mean = cis_mean < relative_ci_threshold_mean
+    df = df[mask_per_sample & mask_mean]
+    if len(df) == 0:
+        logger.debug(f"Failed to obtain statistically confident runtime for all factors")
+        return None
+
+    # Grab only the medians
+    df = df.xs("median", axis=1, level="stat")
+
+    assert not any(df.isna().any(axis=1))
 
     # Get the speedups relative to factor 1 in each input.
     for factor in rts.keys():
         if factor != 1:
             df[factor] = df[1] / df[factor]
 
+    assert not any(df.isna().any(axis=1))
+
     # Encode inability to unroll (action = False) as speedup = 0.
     for factor in {i for i in range(UNROLL_FACTOR_OFFSET, MAX_UNROLL_FACTOR + 1)} - rts.keys():
         df[factor] = 0.0
 
+    assert not any(df.isna().any(axis=1))
+
     # Drop the baseline
     df.drop(1, axis=1, inplace=True)
 
+    assert not any(df.isna().any(axis=1))
+
     # Get the median speedup for each factor across all inputs.
     speedups = np.array(df.median(axis=0))
+
+    assert not any(speedups == np.nan)
 
     return UnrollDecisionTrainingSample(udrs.features, speedups)
 
