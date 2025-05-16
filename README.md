@@ -1,29 +1,38 @@
 # input-gen utilities
 
-## Python configuration
-Version 3.11.0
+## Dependencies
+
+input-gen requires a C++20 conformant standard library.
+
+### Python configuration
+Note that this repo requires python `3.11`.
+
+Example compilation configuration for python:
 ``` shell
 ./configure --prefix=/path/to/install/dir --enable-shared --enable-loadable-sqlite-extensions --enable-optimizations
 make -j
 make install
 ```
 
-## LLVM build configuration
+### LLVM build configuration
 
 Baseline cmake configuration for the llvm installation:
 
 ``` 
-cmake $LLVM_PROJECT_ROOT/llvm -DCMAKE_ENABLE_PROJECTS="clang;lld" -DCMAKE_ENABLE_RUNTIMES="compiler-rt" -DCOMPILER_RT_BUILD_INPUTGEN=ON"
+cmake $LLVM_PROJECT_ROOT/llvm -DCMAKE_ENABLE_PROJECTS="clang;lld" -DCMAKE_ENABLE_RUNTIMES="compiler-rt" -DCOMPILER_RT_BUILD_INPUTGEN=ON" -DCMAKE_BUILD_TYPE=Release
 ```
+These options are required: `-DCMAKE_ENABLE_RUNTIMES="compiler-rt" -DCOMPILER_RT_BUILD_INPUTGEN=ON"`
 
-input-gen requires a C++20 conformant standard library.
+See the following for more details on building LLVM:  https://llvm.org/docs/CMake.html
 
 ## Scripts
 
 The input-gen scripts generally accept the option `-mclang` to specify
 additional flags to `clang` and `-mllvm` for additional options to `opt`.
 
-Pass `--debug` to enable verbose output for debugging purposes.
+Use `--debug` to enable verbose output for debugging purposes.
+
+Use `--one <id>` to process a specific row id from the input dataset.
 
 `clang` is used for linking and compiling so depending on your environment,
 additional flags may need to be specified.
@@ -38,8 +47,6 @@ Multiple flags can also be specified as such:
 ``` shell
 -mclang='--flag1' -mclang='--flag2' 
 ```
-
-Note that this repo requires python `3.11`.
 
 ### Generating inputs for a module
 
@@ -84,12 +91,12 @@ Install the dependencies:
 dnf install libpfm-devel
 ```
 
-Change to the root directory of this repo.
+From the root of the repo, change to the profiling runtime directory.
 
 ``` shell
 cd compiler_opt/sl/unrolling/rts/
-make CPU=AMD
-# make CPU=INTEL
+make CPU=AMD # For AMD CPUs
+make CPU=INTEL # For Intel CPUs
 ```
 
 Check the compiled timing runtime:
@@ -112,13 +119,18 @@ compiler_opt/sl/unrolling/rts/unrolling_profiler.o
 
 The following can be used to generate training samples
 ``` shell
-PYTHONPATH=$PYTHONPATH:. python3 -m compiler_opt.sl.unrolling.process_com_pile_loop_inputs --dataset ~/datasets/ComPileLoopInputs  --output-dataset ~/datasets//UnrollTrainingSamples.sqlite3 -mclang=compiler_opt/sl/unrolling/rts/unrolling_profiler.o  -mclang=-lpfm
+./compiler_opt/sl/unrolling/ray_start_single_node_generate_unroll_training_samples.py
 ```
+The script may need to be edited depending on your CPU configuration (number of physical and logical cores).
 
-Note the additional `-mclang` flag which links in the profiling runtime.
+The training samples must be preprocessed using the following before training:
+
+``` shell
+PYTHONPATH=$PYTHONPATH:. python3 -m compiler_opt.sl.unrolling.preprocess_unroll_training_samples --dataset ~/datasets/UnrollTrainingSamples.sqlite3 --output-dataset ~/datasets/UnrollTrainingSamplesPreprocessed.sqlite3 --output-parquet ~/datasets/UnrollTrainingSamplesPreprocessed.parquet
+```
 
 ### Training the unroll heuristic
 
 ``` shell
-PYTHONPATH=$PYTHONPATH:. python3 -m compiler_opt.sl.unrolling.train --dataset ~/datasets/UnrollTrainingSamples.sqlite3
+PYTHONPATH=$PYTHONPATH:. python3 -m compiler_opt.sl.unrolling.train --preprocessed-dataset ~/datasets/UnrollTrainingSamplesPreprocessed.parquet
 ```
