@@ -1,101 +1,124 @@
-# Infrastructure for MLGO - a Machine Learning Guided Compiler Optimizations Framework.
+# input-gen utilities
 
-MLGO is a framework for integrating ML techniques systematically in LLVM. It
-replaces human-crafted optimization heuristics in LLVM with machine learned
-models. The MLGO framework currently supports two optimizations:
-
-1.  inlining-for-size([LLVM RFC](https://lists.llvm.org/pipermail/llvm-dev/2020-April/140763.html));
-2.  register-allocation-for-performance([LLVM RFC](https://lists.llvm.org/pipermail/llvm-dev/2021-November/153639.html))
-
-The compiler components are both available in the main LLVM repository. This
-repository contains the training infrastructure and related tools for MLGO.
-
-We currently use two different ML algorithms: Policy Gradient and Evolution
-Strategies to train policies. Currently, this repository only support Policy
-Gradient training. The release of Evolution Strategies training is on our
-roadmap.
-
-Check out this [demo](docs/inlining-demo/demo.md) for an end-to-end demonstration of how
-to train your own inlining-for-size policy from the scratch with Policy
-Gradient, or check out this [demo](docs/regalloc-demo/demo.md) for a demonstration of how
-to train your own regalloc-for-performance policy.
-
-For more details about MLGO, please refer to our paper
-[MLGO: a Machine Learning Guided Compiler Optimizations Framework](https://arxiv.org/abs/2101.04808).
-
-For more details about how to contribute to the project, please refer to
-[contributions](docs/contributing.md).
-
-## Pretrained models
-
-We occasionally release pretrained models that may be used as-is with LLVM.
-Models are released as github releases, and are named as
-[task]-[major-version].[minor-version].The versions are semantic: the major
-version corresponds to breaking changes on the LLVM/compiler side, and the minor
-version corresponds to model updates that are independent of the compiler.
-
-When building LLVM, there is a flag `-DLLVM_INLINER_MODEL_PATH` which you may
-set to the path to your inlining model. If the path is set to `download`, then
-cmake will download the most recent (compatible) model from github to use. Other
-values for the flag could be:
-
-```sh
-# Model is in /tmp/model, i.e. there is a file /tmp/model/saved_model.pb along
-# with the rest of the tensorflow saved_model files produced from training.
--DLLVM_INLINER_MODEL_PATH=/tmp/model
-
-# Download the most recent compatible model
--DLLVM_INLINER_MODEL_PATH=download
+## Python configuration
+Version 3.11.0
+``` shell
+./configure --prefix=/path/to/install/dir --enable-shared --enable-loadable-sqlite-extensions --enable-optimizations
+make -j
+make install
 ```
 
-## Prerequisites
+## LLVM build configuration
 
-Currently, the assumptions for the system are:
+Baseline cmake configuration for the llvm installation:
 
-*   Recent Ubuntu distro, e.g. 20.04
-*   python 3.8.x/3.9.x/3.10.x
-*   for local training, which is currently the only supported mode, we recommend
-    a high-performance workstation (e.g. 96 hardware threads).
-
-Training assumes a clang build with ML 'development-mode'. Please refer to:
-
-*   [LLVM documentation](https://llvm.org/docs/CMake.html)
-*   the build
-    [bot script](https://github.com/google/ml-compiler-opt/blob/main/buildbot/buildbot_init.sh)
-
-The model training - specific prerequisites are:
-
-Pipenv:
-```shell
-pip3 install pipenv
+``` 
+cmake $LLVM_PROJECT_ROOT/llvm -DCMAKE_ENABLE_PROJECTS="clang;lld" -DCMAKE_ENABLE_RUNTIMES="compiler-rt" -DCOMPILER_RT_BUILD_INPUTGEN=ON"
 ```
 
-The actual dependencies:
-```shell
-pipenv sync --system --categories "packages dev-packages ci"
+input-gen requires a C++20 conformant standard library.
+
+## Scripts
+
+The input-gen scripts generally accept the option `-mclang` to specify
+additional flags to `clang` and `-mllvm` for additional options to `opt`.
+
+Pass `--debug` to enable verbose output for debugging purposes.
+
+`clang` is used for linking and compiling so depending on your environment,
+additional flags may need to be specified.
+
+For example to use a newer gcc toolchain rather than the default (required when
+your default C++ std lib may be too old)
+``` shell
+-mclang='--gcc-toolchain=/path/to/gcc-toolchain' 
 ```
-Note that the above command will only work from the root of the repository
-since it needs to have `Pipfile.lock` in the working directory at the time
-of execution.
 
-The above command will also install all the packages, including development
-packages (the `dev-packages` category), and packages only needed in CI (the
-`ci` category). If you do not need those, you can omit them from the categories
-option.
-
-Optionally, to run tests (run_tests.sh), you also need:
-
-```shell
-sudo apt-get install virtualenv
+Multiple flags can also be specified as such:
+``` shell
+-mclang='--flag1' -mclang='--flag2' 
 ```
 
-Note that the same tensorflow package is also needed for building the 'release'
-mode for LLVM.
+Note that this repo requires python `3.11`.
 
-## Docs
+### Generating inputs for a module
 
-An end-to-end [demo](docs/inlining-demo/demo.md) using Fuchsia as a codebase from which
-we extract a corpus and train a model.
+``` shell
+python3 input_gen.py --module input_module.ll (--entry-function=ENTRY_FUNCTION | --entry-all | --entry-marked)
+```
 
-[How to add a feature](docs/adding_features.md) guide.
-[Extensibility model](docs/extensibility.md).
+### Generating ComPileLoop from ComPile
+
+``` shell
+PYTHONPATH=$PYTHONPATH:. python3 -m com_pile_utils.generate_com_pile_loop --dataset ~/datasets/ComPile/ --output-dataset ~/datasets/ComPileLoop.sqlite3
+```
+
+USR1 can be sent to get a status report, USR2 can be sent to abort and write out
+the current pending database file.
+
+### Generating ComPileLoop+Inputs from ComPileLoop
+
+``` shell
+PYTHONPATH=$PYTHONPATH:. python3 -m com_pile_utils.generate_com_pile_loop_inputs --dataset ~/datasets/ComPileLoop.sqlite3 --output-dataset ~/datasets/ComPileLoopInputs.sqlite3
+```
+
+### Demo of how to process ComPileLoop
+
+``` shell
+python3 process_com_pile_loop_demo.py --dataset ~/datasets/ComPileLoop/
+```
+
+### Demo of how to process ComPileLoop+Inputs
+
+``` shell
+python3 process_com_pile_loop_inputs_demo.py --dataset ~/datasets/ComPileLoopInputs/
+```
+
+This will read the dataset and replay all inputs in it.
+
+### Generating samples for training the unroll heuristic
+
+Install the dependencies:
+
+``` shell
+dnf install libpfm-devel
+```
+
+Change to the root directory of this repo.
+
+``` shell
+cd compiler_opt/sl/unrolling/rts/
+make CPU=AMD
+# make CPU=INTEL
+```
+
+Check the compiled timing runtime:
+
+```
+make check
+```
+
+And go back to the root.
+
+```
+cd -
+```
+
+This should result in the following file:
+
+``` shell
+compiler_opt/sl/unrolling/rts/unrolling_profiler.o
+```
+
+The following can be used to generate training samples
+``` shell
+PYTHONPATH=$PYTHONPATH:. python3 -m compiler_opt.sl.unrolling.process_com_pile_loop_inputs --dataset ~/datasets/ComPileLoopInputs  --output-dataset ~/datasets//UnrollTrainingSamples.sqlite3 -mclang=compiler_opt/sl/unrolling/rts/unrolling_profiler.o  -mclang=-lpfm
+```
+
+Note the additional `-mclang` flag which links in the profiling runtime.
+
+### Training the unroll heuristic
+
+``` shell
+PYTHONPATH=$PYTHONPATH:. python3 -m compiler_opt.sl.unrolling.train --dataset ~/datasets/UnrollTrainingSamples.sqlite3
+```
