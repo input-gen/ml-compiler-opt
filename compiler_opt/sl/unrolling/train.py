@@ -62,8 +62,6 @@ def convert_data_to_df(
     features_spec = data["features_spec"]
     advice_spec = data["advice_spec"]
     samples = data["samples"]
-    print(features_spec)
-    print(advice_spec)
 
     flattened_features_spec = []
     flattened_advice_spec = [
