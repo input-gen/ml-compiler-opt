@@ -119,7 +119,7 @@ compiler_opt/sl/unrolling/rts/unrolling_profiler.o
 
 The following can be used to generate training samples
 ``` shell
-./compiler_opt/sl/unrolling/ray_start_single_node_generate_unroll_training_samples.py
+./compiler_opt/sl/unrolling/ray_start_single_node_generate_unroll_training_samples.sh
 ```
 The script may need to be edited depending on your CPU configuration (number of physical and logical cores).
 
