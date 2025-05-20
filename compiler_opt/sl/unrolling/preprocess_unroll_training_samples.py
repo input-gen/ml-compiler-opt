@@ -37,7 +37,8 @@ def parse_args_and_run():
     args = parser.parse_args()
     generate_main.main(args, process_module_wrapper, process_module)
 
-    df = train.get_df(args.output_dataset)
+    df = train.get_df(args.output_dataset, remote=True)
+    df.info()
     df.to_parquet(args.output_parquet)
 
 

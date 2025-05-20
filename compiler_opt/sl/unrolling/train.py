@@ -1,4 +1,5 @@
 import argparse
+import ray
 import tensorflow as tf
 import pandas as pd
 import logging
@@ -54,6 +55,15 @@ def speedup_metric(y_true, y_pred):
     return geometric_mean(oracle_speedups), geometric_mean(predicted_speedups)
 
 
+@ray.remote
+def convert_data_to_df_remote(
+    data,
+    confidence=generate_unroll_training_samples.CONFIDENCE,
+    relative_ci_threshold=generate_unroll_training_samples.RELATIVE_CI_THRESHOLD,
+):
+    return convert_data_to_df(data, confidence, relative_ci_threshold)
+
+
 def convert_data_to_df(
     data,
     confidence=generate_unroll_training_samples.CONFIDENCE,
@@ -75,8 +85,8 @@ def convert_data_to_df(
             fname = s.name + str(i)
             flattened_features_spec.append((fname, s.dtype.as_numpy_dtype))
 
-    all_features = {name: [] for name, ty in flattened_features_spec}
-    all_advice = {name: [] for name, ty in flattened_advice_spec}
+    all_features = [[] for name, ty in flattened_features_spec]
+    all_advice = [[] for name, ty in flattened_advice_spec]
 
     for sample in samples:
         if isinstance(sample, UnrollDecisionRawSample):
@@ -93,19 +103,18 @@ def convert_data_to_df(
             assert False
 
         features = sum([list(a) for a in sample.features], [])
-        for feature, (name, ty) in zip(features, flattened_features_spec):
-            all_features[name].append(feature)
-        for advice, (name, ty) in zip(sample.advice, flattened_advice_spec):
-            all_advice[name].append(advice)
-
-    feature_types = {name: ty for name, ty in flattened_features_spec}
-    advice_types = {name: ty for name, ty in flattened_advice_spec}
+        for feature, l in zip(features, all_features):
+            l.append(feature)
+        for advice, l in zip(sample.advice, all_advice):
+            l.append(advice)
 
     all_features = {
-        name: pandas.Series(data=l, dtype=feature_types[name]) for name, l in all_features.items()
+        name: pandas.Series(data=l, dtype=ty)
+        for (name, ty), l in zip(flattened_features_spec, all_features)
     }
     all_advice = {
-        name: pandas.Series(data=l, dtype=advice_types[name]) for name, l in all_advice.items()
+        name: pandas.Series(data=l, dtype=ty)
+        for (name, ty), l in zip(flattened_advice_spec, all_advice)
     }
 
     feature_df = pandas.DataFrame(all_features)
@@ -126,15 +135,26 @@ def get_df(
     dataset,
     confidence=generate_unroll_training_samples.CONFIDENCE,
     relative_ci_threshold=generate_unroll_training_samples.RELATIVE_CI_THRESHOLD,
+    remote=False,
 ):
     logger.info("Loading dataset...")
     datas = get_data(dataset)
     logger.info("Done.")
     logger.info("Converting data...")
-    unroll_df = pd.concat(
-        map(lambda x: convert_data_to_df(x, confidence, relative_ci_threshold), datas)
-    )
-    unroll_df = unroll_df.reset_index(drop=True).astype(float)
+
+    if remote:
+        dfs = ray.get(
+            list(
+                map(
+                    lambda x: convert_data_to_df_remote.remote(x, confidence, relative_ci_threshold),
+                    datas,
+                )
+            )
+        )
+    else:
+        dfs = map(lambda x: convert_data_to_df(x, confidence, relative_ci_threshold), datas)
+    unroll_df = pd.concat(dfs)
+    unroll_df = unroll_df.reset_index(drop=True)
     logger.info("Done.")
     return unroll_df
 
