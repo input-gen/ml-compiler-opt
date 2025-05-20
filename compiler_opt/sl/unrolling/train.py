@@ -62,8 +62,24 @@ def convert_data_to_df(
     features_spec = data["features_spec"]
     advice_spec = data["advice_spec"]
     samples = data["samples"]
+    print(features_spec)
+    print(advice_spec)
 
-    flattened_samples = []
+    flattened_features_spec = []
+    flattened_advice_spec = [
+        (advice_spec.name + str(i + 2), advice_spec.dtype.as_numpy_dtype)
+        for i in range(advice_spec.shape[0])
+    ]
+
+    for s in features_spec:
+        assert len(s.shape) == 1
+        for i in range(s.shape[0]):
+            fname = s.name + str(i)
+            flattened_features_spec.append((fname, s.dtype.as_numpy_dtype))
+
+    all_features = {name: [] for name, ty in flattened_features_spec}
+    all_advice = {name: [] for name, ty in flattened_advice_spec}
+
     for sample in samples:
         if isinstance(sample, UnrollDecisionRawSample):
             sample = generate_unroll_training_samples.get_ud_sample_from_raw(
@@ -78,17 +94,26 @@ def convert_data_to_df(
         else:
             assert False
 
-        flattened_features = np.concatenate(sample.features + [sample.advice])
-        flattened_samples.append(flattened_features)
+        features = sum([list(a) for a in sample.features], [])
+        for feature, (name, ty) in zip(features, flattened_features_spec):
+            all_features[name].append(feature)
+        for advice, (name, ty) in zip(sample.advice, flattened_advice_spec):
+            all_advice[name].append(advice)
 
-    labels = []
-    for s in features_spec:
-        assert len(s.shape) == 1
-        for i in range(s.shape[0]):
-            labels.append(s.name + str(i))
-    labels += [advice_spec.name + str(i + 2) for i in range(advice_spec.shape[0])]
+    feature_types = {name: ty for name, ty in flattened_features_spec}
+    advice_types = {name: ty for name, ty in flattened_advice_spec}
 
-    df = pandas.DataFrame(flattened_samples, columns=labels)
+    all_features = {
+        name: pandas.Series(data=l, dtype=feature_types[name]) for name, l in all_features.items()
+    }
+    all_advice = {
+        name: pandas.Series(data=l, dtype=advice_types[name]) for name, l in all_advice.items()
+    }
+
+    feature_df = pandas.DataFrame(all_features)
+    advice_df = pandas.DataFrame(all_advice)
+
+    df = pandas.concat([feature_df, advice_df], axis=1)
     logger.debug("Intermediate df")
     logger.debug(df)
     return df
