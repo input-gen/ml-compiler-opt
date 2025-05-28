@@ -261,6 +261,38 @@ def get_benchmarking_mean_ci(samples, confidence):
     return sample_mean, relative_ci_width
 
 
+def adaptive_benchmark_baseline(
+    iterator,
+    logger=logger,
+):
+    return adaptive_benchmark(
+        iterator,
+        initial_samples=INITIAL_SAMPLES,
+        max_initial_samples=MAX_INITIAL_SAMPLES,
+        max_samples=100,
+        confidence=0.95,
+        relative_ci_threshold=0.02,
+        logger=logger,
+        fail_on_non_convergence=False,
+    )
+
+
+def adaptive_benchmark_factor(
+    iterator,
+    logger=logger,
+):
+    return adaptive_benchmark(
+        iterator,
+        initial_samples=INITIAL_SAMPLES,
+        max_initial_samples=MAX_INITIAL_SAMPLES,
+        max_samples=MAX_SAMPLES,
+        confidence=CONFIDENCE,
+        relative_ci_threshold=RELATIVE_CI_THRESHOLD,
+        logger=logger,
+        fail_on_non_convergence=False,
+    )
+
+
 def adaptive_benchmark(
     iterator,
     initial_samples=INITIAL_SAMPLES,
@@ -501,7 +533,7 @@ def generate_samples(decision_results, inputs: List[List], replay_options, args,
             logger.debug(f"Match {f}")
             return f
 
-    def get_module_runtimes(module, maybe_non_zero_runtime=None, invalid_runtime=None):
+    def get_module_runtimes(module, is_baseline, maybe_non_zero_runtime=None, invalid_runtime=None):
         NUM_REPLAYS = None
         TIMEOUT = 1
 
@@ -523,7 +555,11 @@ def generate_samples(decision_results, inputs: List[List], replay_options, args,
                             it = igr.replay_input(
                                 inpt.data, inpt.entry_no, NUM_REPLAYS, timeout=TIMEOUT
                             )
-                            res = adaptive_benchmark(map(get_rt_from_replay_res, it), logger=logger)
+                            if is_baseline:
+                                bm_f = adaptive_benchmark_baseline
+                            else:
+                                bm_f = adaptive_benchmark_factor
+                            res = bm_f(map(get_rt_from_replay_res, it), logger=logger)
                         except InputGenError as e:
                             res = get_invalid_abr()
                     rtss.append(res)
@@ -540,7 +576,9 @@ def generate_samples(decision_results, inputs: List[List], replay_options, args,
                 return UnrollFactorRuntimes(
                     ufr.factor,
                     True,
-                    get_module_runtimes(ufr.module, maybe_non_zero_runtime, invalid_runtime),
+                    get_module_runtimes(
+                        ufr.module, ufr.factor == 1, maybe_non_zero_runtime, invalid_runtime
+                    ),
                 )
             except InputGenError as e:
                 logger.debug(e)
