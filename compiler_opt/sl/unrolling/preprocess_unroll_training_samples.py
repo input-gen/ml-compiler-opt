@@ -30,6 +30,10 @@ def parse_args_and_run():
         type=float,
         default=generate_unroll_training_samples.RELATIVE_CI_THRESHOLD,
     )
+    parser.add_argument("--weighted", default=False, action="store_true")
+    parser.add_argument(
+        "--low-runtime-cutoff", type=float, default=generate_unroll_training_samples.LOW_RUNTIME_CUTOFF
+    )
 
     parser.add_argument("--one", type=int, default=None)
     parser.add_argument("--debug", default=False, action="store_true")
@@ -56,6 +60,7 @@ def process_module(args, idx, data):
             confidence=args.confidence,
             relative_ci_threshold_per_sample=args.relative_ci_threshold_per_sample,
             relative_ci_threshold_mean=args.relative_ci_threshold_mean,
+            weighted=args.weighted,
         )
         if samples is not None:
             samples.append(sample)

@@ -423,11 +423,16 @@ def reduce_abr(abr: AdaptiveBenchmarkingResult, confidence, relative_ci_threshol
         return np.nan
 
 
+LOW_RUNTIME_CUTOFF = 1000
+
+
 def get_ud_sample_from_raw(
     udrs,
     confidence=0.95,
     relative_ci_threshold_per_sample=RELATIVE_CI_THRESHOLD * 2,
     relative_ci_threshold_mean=RELATIVE_CI_THRESHOLD,
+    weighted=False,
+    low_runtime_cutoff=LOW_RUNTIME_CUTOFF,
     logger=logger,
 ):
     all_ufrts = [udrs.base_ufrts] + udrs.factors_ufrts
@@ -459,6 +464,11 @@ def get_ud_sample_from_raw(
         logger.debug(f"Failed to obtain valid runtime for all factors")
         return None
 
+    # Drop any inputs where the base runtime is too low
+    medians = df.xs("median", axis=1, level="stat")
+    mask = medians[1] < low_runtime_cutoff
+    df = df[~mask]
+
     cis = df.xs("ci", axis=1, level="stat")
     mask_per_sample = (cis < relative_ci_threshold_per_sample).any(axis=1)
     cis_mean = cis.mean(axis=1)
@@ -487,12 +497,17 @@ def get_ud_sample_from_raw(
     assert not any(df.isna().any(axis=1))
 
     # Drop the baseline
+    baseline = df[1]
     df.drop(1, axis=1, inplace=True)
 
     assert not any(df.isna().any(axis=1))
 
-    # Get the median speedup for each factor across all inputs.
-    speedups = np.array(df.median(axis=0))
+    # Get the geomean speedup for each factor across all inputs.
+    if weighted:
+        weights = baseline / baseline.sum()
+        speedups = df.apply(lambda col: np.exp(np.sum(weights * np.log(col))), axis=0)
+    else:
+        speedups = df.apply(lambda col: np.exp(np.mean(np.log(col))), axis=0)
 
     assert not any(speedups == np.nan)
 
