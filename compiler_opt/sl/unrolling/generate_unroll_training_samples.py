@@ -165,7 +165,7 @@ def process_module_impl_results(args, idx, data):
     ]
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        uch = unrolling_runner.UnrollCompilerHost(True, args.debug)
+        uch = unrolling_runner.UnrollCompilerHost(False, args.debug)
 
         decision_results = list(
             uch.get_unroll_decision_results(data["module"], process_and_args, tmpdir)
