@@ -50,7 +50,7 @@ def parse_args_and_run():
 
 PHYSICAL_CORE_RESOURCE = "physical_core"
 
-MANAGER_CORES_NUM = 5
+MANAGER_CORES_NUM = 3
 
 
 def main(args):
@@ -66,15 +66,18 @@ def main(args):
             assert len(cpu_mapping) == physical_cores
             logger.info(f"cpu_mapping {cpu_mapping}")
 
-            manager_cores = list(range(physical_cores - 1 - MANAGER_CORES_NUM, physical_cores))
+            manager_cores = list(range(physical_cores - MANAGER_CORES_NUM, physical_cores))
             logger.info(f"Manager cores {manager_cores}")
+            assert len(manager_cores) == MANAGER_CORES_NUM
 
             manager_cpus = sum([cpu_mapping[i] for i in manager_cores], [])
             logger.info(f"Manager cpus {manager_cpus}")
             os.sched_setaffinity(0, manager_cpus)
 
+            benchmarking_core_num = physical_cores - MANAGER_CORES_NUM
+
             context = ray.init(
-                log_to_driver=True, resources={PHYSICAL_CORE_RESOURCE: physical_cores - 1}
+                log_to_driver=False, resources={PHYSICAL_CORE_RESOURCE: benchmarking_core_num}
             )
             args.cpu_mapping = ray.get(get_physical_cpu_mapping.remote())
             assert physical_cores == len(args.cpu_mapping)
@@ -86,6 +89,15 @@ def main(args):
             it = dr.get_one_iter(args.one)
             data = next(it)[1]
             process_module(args, args.one, data)
+
+
+DEBUG_FAILURE_REASONS = True
+
+
+def dfr(*args, **kwargs):
+    if DEBUG_FAILURE_REASONS:
+        print(__name__ + ".debug_failure_reasons: ", end="")
+        print(*args, **kwargs)
 
 
 def get_physical_cores():
@@ -133,9 +145,8 @@ def process_module(args, i, data):
     res = process_module_impl_results(args, i, data)
     if res is None:
         return ProcessResult(i, None)
-    else:
-        assert len(res) == 1
-        return process_module_impl_sample(args, i, res[0])
+    assert len(res) == 1
+    return process_module_impl_sample(args, i, res[0])
 
 
 def process_module_impl_results(args, idx, data):
@@ -152,11 +163,11 @@ def process_module_impl_results(args, idx, data):
     inputs = data["inputs"]
     num_inputs = sum(map(len, inputs))
     if num_inputs == 0:
-        logger.debug("No inputs")
+        dfr("No inputs")
         return None
     # Let's allow invalid? replays just in case.
     if False and all([r is None for r in data["replays"]]):
-        logger.debug("No valid replays")
+        dfr("No valid replays")
         return None
 
     process_and_args = [
@@ -172,6 +183,7 @@ def process_module_impl_results(args, idx, data):
         )
 
     if len(decision_results) == 0:
+        dfr("No decision results generated")
         return None
 
     features_spec = uch.get_features_spec()
@@ -271,7 +283,7 @@ def adaptive_benchmark_baseline(
         max_initial_samples=MAX_INITIAL_SAMPLES,
         max_samples=100,
         confidence=0.95,
-        relative_ci_threshold=0.02,
+        relative_ci_threshold=0.01,
         logger=logger,
         fail_on_non_convergence=False,
     )
@@ -636,10 +648,10 @@ def generate_samples(decision_results, inputs: List[List], replay_options, args,
                 invalid_runtime |= this_have_invalid_runtime
 
             if all(~maybe_non_zero_runtime):
-                logger.debug("Failed to obtain non-0 runtime")
+                dfr("Failed to obtain non-0 runtime")
                 return None
             if all(invalid_runtime):
-                logger.debug("Failed to obtain non-0 runtime")
+                dfr("Failed to obtain valid runtime")
                 return None
 
         logger.debug(f"Got runtimes {runtimes}")
@@ -647,7 +659,7 @@ def generate_samples(decision_results, inputs: List[List], replay_options, args,
         assert all(rt is not None for rt in runtimes), "Missing unroll factors"
 
         if all(not rt.action for rt in runtimes[1:]):
-            logger.debug("Failed to get action for any factor")
+            dfr("Failed to get action for any factor")
             return None
 
         assert runtimes[0].factor == 1, "Base does not have unroll factor == 1"
