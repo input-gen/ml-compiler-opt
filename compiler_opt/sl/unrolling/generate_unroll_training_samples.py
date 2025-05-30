@@ -165,7 +165,7 @@ def process_module_impl_results(args, idx, data):
     ]
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        uch = unrolling_runner.UnrollCompilerHost(False, args.debug)
+        uch = unrolling_runner.UnrollCompilerHost(True, args.debug)
 
         decision_results = list(
             uch.get_unroll_decision_results(data["module"], process_and_args, tmpdir)
@@ -511,7 +511,7 @@ def get_ud_sample_from_raw(
 
     assert not any(speedups == np.nan)
 
-    return UnrollDecisionTrainingSample(udrs.features, speedups)
+    return UnrollDecisionTrainingSample(udrs.features, udrs.heuristic_factor, speedups)
 
 
 def filter_none(l):
@@ -653,7 +653,7 @@ def generate_samples(decision_results, inputs: List[List], replay_options, args,
         assert runtimes[0].factor == 1, "Base does not have unroll factor == 1"
         assert runtimes[0].action, "Action has to be true on the base"
 
-        return UnrollDecisionRawSample(x, runtimes[0], runtimes[1:])
+        return UnrollDecisionRawSample(x, ud.heuristic_factor, runtimes[0], runtimes[1:])
 
     raw_samples = filter_none(map(get_ud_raw_sample, decision_results))
     if raw:

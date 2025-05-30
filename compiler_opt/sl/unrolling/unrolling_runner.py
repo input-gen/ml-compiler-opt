@@ -83,8 +83,18 @@ def send(f: BinaryIO, value: Union[int, float], spec: tf.TensorSpec):
 
 
 def make_response_for_factor(factor: int):
+    if factor == -1:
+        # Special case - we use this to encode "heuristic did not make
+        # decision", i.e. std::nullopt
+        return [-1.0 for _ in range(ADVICE_TENSOR_LEN)]
+    if factor > MAX_UNROLL_FACTOR:
+        # Special case - we use this to encode factors larger that what our
+        # model supports
+        l = [-1.0 for _ in range(ADVICE_TENSOR_LEN)]
+        l[-1] = float(factor)
+        return l
     l = [0.5 for _ in range(ADVICE_TENSOR_LEN)]
-    if factor == 0 or factor == 1:
+    if factor == 1 or factor == 0:
         return l
     assert factor <= MAX_UNROLL_FACTOR
     assert factor >= UNROLL_FACTOR_OFFSET
@@ -103,6 +113,7 @@ class UnrollFactorResult:
 @dataclasses.dataclass(frozen=True)
 class UnrollDecision:
     features: List
+    heuristic_factor: int
     results: List[UnrollFactorResult]
 
 
@@ -120,6 +131,7 @@ class UnrollCompilerHost:
         self.debug = debug
 
         self.cur_action = None
+        self.cur_heuristic = None
 
         self.num_decisions = None
         self.decisions = None
@@ -142,14 +154,18 @@ class UnrollCompilerHost:
         self.features.append(tensor_values)
 
     def on_heuristic_print(self, index, heuristic):
-        logger.debug(heuristic)
+        logger.debug(f"Got heuristic {heuristic}")
 
     def on_action_print(self, index, action):
-        logger.debug(action)
+        logger.debug(f"Got action {action}")
 
     def on_action_save(self, index, action):
         logger.debug(f"Saving action {action}")
         self.cur_action = action
+
+    def on_heuristic_save(self, index, heuristic):
+        logger.debug(f"Saving heuristic {heuristic}")
+        self.cur_heuristic = heuristic
 
     def get_replaced_response(self, heuristic, index, factor):
         return make_response_for_factor(heuristic)
@@ -158,7 +174,7 @@ class UnrollCompilerHost:
         event = json.loads(fc.readline())
         logger.debug("Read" + str(event))
         assert "heuristic" in event
-        heuristic = int.from_bytes(fc.read(8))
+        heuristic = int.from_bytes(fc.read(8), byteorder=sys.byteorder, signed=True)
         logger.debug(heuristic)
         fc.readline()
         return heuristic
@@ -167,7 +183,7 @@ class UnrollCompilerHost:
         event = json.loads(fc.readline())
         logger.debug("Read" + str(event))
         assert "action" in event
-        action = bool(int.from_bytes(fc.read(1)))
+        action = int.from_bytes(fc.read(1), byteorder=sys.byteorder, signed=False)
         logger.debug(action)
         fc.readline()
         return action
@@ -227,36 +243,75 @@ class UnrollCompilerHost:
 
         for decision in range(self.num_decisions):
             logger.debug(f"Exploring decision: {decision}")
+            heuristic = None
             decision_results = []
+            cur_status = "success"
             # From factor = 1 (i.e. no unroll) to MAX_UNROLL_FACTOR inclusive
             for factor in range(1, MAX_UNROLL_FACTOR + 1):
                 logger.debug(f"Exploring factor: {factor}")
+                self.cur_action = None
+                self.cur_heuristic = None
                 cr = self.compile_once(
                     mod,
-                    lambda index, features: (),
-                    lambda index, heuristic: (),
-                    lambda index, action: self.on_action_save(index, action)
-                    if index == decision
-                    else None,
-                    lambda index: ("__mlgo_unrolled_loop_begin", "__mlgo_unrolled_loop_end")
-                    if index == decision
-                    else None,
-                    lambda index, tensor, heuristic: make_response_for_factor(factor)
-                    if index == decision
-                    else make_response_for_factor(heuristic),
+                    on_features=lambda index, features: (),
+                    on_heuristic=(
+                        lambda index, heuristic: self.on_heuristic_save(index, heuristic)
+                        if index == decision
+                        else None
+                    ),
+                    on_action=(
+                        lambda index, action: self.on_action_save(index, action)
+                        if index == decision
+                        else None
+                    ),
+                    get_instrument_response=(
+                        lambda index: (
+                            "__mlgo_unrolled_loop_begin",
+                            "__mlgo_unrolled_loop_end",
+                        )
+                        if index == decision
+                        else None
+                    ),
+                    get_response=(
+                        lambda index, tensor, heuristic: make_response_for_factor(factor)
+                        if index == decision
+                        else make_response_for_factor(heuristic)
+                    ),
                 )
                 if cr is None:
+                    cur_status = "compilation_fail"
                     break
                 out_module = cr.module
+
+                if factor == 2 and self.cur_action == 0:
+                    cur_status = "no_action"
+                    break
+
+                assert self.cur_action is not None
+                assert self.cur_heuristic is not None
+                if heuristic is None:
+                    heuristic = self.cur_heuristic
+                else:
+                    assert heuristic == self.cur_heuristic
                 decision_results.append(UnrollFactorResult(factor, self.cur_action, out_module))
-            else:
+
+            if cur_status == "success":
                 # If we did not break the above loop
-                ud = UnrollDecision(self.features[decision], decision_results)
+                ud = UnrollDecision(self.features[decision], heuristic, decision_results)
                 logger.debug(pprint.pformat(ud))
                 logger.debug("Got result:")
                 yield ud
                 continue
-            break
+            elif cur_status == "compilation_fail":
+                # There is something seriously wrong and we should not be
+                # proceeding
+                logger.debug("Compilation failed!")
+                break
+            elif cur_status == "no_action":
+                logger.debug("Got no action")
+                continue
+            else:
+                assert False
 
     def compile_once(
         self, mod, on_features, on_heuristic, on_action, get_instrument_response, get_response
@@ -382,19 +437,10 @@ class UnrollCompilerHost:
                             tensor_values.append(fv)
 
                         on_features(cur_decision, tensor_values)
-
                         heuristic = self.read_heuristic(fc)
-                        # TODO is this want we want to do??? Kind of unfair to the
-                        # unroll heuristic if we choose to evaluate using the
-                        # heuristic responses.
-                        if heuristic > MAX_UNROLL_FACTOR:
-                            heuristic = MAX_UNROLL_FACTOR
                         on_heuristic(cur_decision, heuristic)
-
                         send(tc, get_response(cur_decision, tensor_values, heuristic), advice_spec)
-
                         on_action(cur_decision, self.read_action(fc))
-
                         send_instrument_response(tc, get_instrument_response(cur_decision))
 
                         cur_decision += 1

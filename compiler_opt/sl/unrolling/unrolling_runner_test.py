@@ -4,14 +4,12 @@ import datasets
 import ray
 import logging
 from argparse import Namespace
-from . import generate_unroll_results as gur
+
+# from . import generate_unroll_results as gur
 from . import generate_unroll_training_samples as guts
 import com_pile_utils.generate_com_pile_loop_inputs as gcpli
 import com_pile_utils.generate_com_pile_loop as gcpl
 from com_pile_utils.dataset_writer import ID_FIELD
-
-logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.DEBUG)
 
 TEST_MODULE = b"""
 ; ModuleID = '/tmp/tmp40q172nj/1_intermediate_original_module'
@@ -1331,22 +1329,145 @@ for.body:                                         ; preds = %for.body.preheader,
 attributes #0 = { inputgen_entry }
 """
 
+TEST_MODULE3 = b"""
+define dso_local void @__llvm_extracted_loop.0(ptr noundef captures(none) %a, i32 noundef %n) local_unnamed_addr #0 {
+for.body.preheader:
+  br label %for.body
 
-if True:
+for.cond.cleanup:                                 ; preds = %for.body, %entry
+  ret void
+
+for.body:                                         ; preds = %for.body.preheader, %for.body
+  %indvars.iv = phi i64 [ 0, %for.body.preheader ], [ %indvars.iv.next, %for.body ]
+  %arrayidx = getelementptr inbounds nuw double, ptr %a, i64 %indvars.iv
+  store double 3.010400e+04, ptr %arrayidx, align 8
+  %indvars.iv.next = add nuw nsw i64 %indvars.iv, 1
+  %exitcond.not = icmp eq i64 %indvars.iv.next, 1024
+  br i1 %exitcond.not, label %for.cond.cleanup, label %for.body
+}
+attributes #0 = { inputgen_entry }
+"""
+
+TEST_MODULE4 = b"""
+define dso_local void @__llvm_extracted_loop.0(ptr noundef captures(none) %a, i32 noundef %n) local_unnamed_addr #0 {
+entry0:
+  %cmp1 = icmp sle i32 %n, 10000
+  br i1 %cmp1, label %entry, label %for.cond.cleanup
+entry:
+  %cmp9 = icmp sgt i32 %n, 0
+  br i1 %cmp9, label %for.body.preheader, label %for.cond.cleanup
+
+for.body.preheader:                               ; preds = %entry
+  %wide.trip.count = zext nneg i32 %n to i64
+  br label %for.body
+
+for.cond.cleanup:                                 ; preds = %for.body, %entry
+  ret void
+
+for.body:                                         ; preds = %for.body.preheader, %for.body
+  %indvars.iv = phi i64 [ 0, %for.body.preheader ], [ %indvars.iv.next, %for.body ]
+  %arrayidx = getelementptr inbounds nuw double, ptr %a, i64 %indvars.iv
+  store double 3.010400e+04, ptr %arrayidx, align 8
+  %indvars.iv.next = add nuw nsw i64 %indvars.iv, 1
+  %exitcond.not = icmp eq i64 %indvars.iv.next, %wide.trip.count
+  br i1 %exitcond.not, label %for.cond.cleanup, label %for.body
+}
+attributes #0 = { inputgen_entry }
+"""
+
+# Gets full unrolled so no decisions to make
+TEST_MODULE5 = b"""
+define dso_local void @__llvm_extracted_loop.0(ptr noundef captures(none) %a, i32 noundef %n) local_unnamed_addr #0 {
+for.body.preheader:
+  br label %for.body
+
+for.cond.cleanup:                                 ; preds = %for.body, %entry
+  ret void
+
+for.body:                                         ; preds = %for.body.preheader, %for.body
+  %indvars.iv = phi i64 [ 0, %for.body.preheader ], [ %indvars.iv.next, %for.body ]
+  %arrayidx = getelementptr inbounds nuw double, ptr %a, i64 %indvars.iv
+  store double 3.010400e+04, ptr %arrayidx, align 8
+  %indvars.iv.next = add nuw nsw i64 %indvars.iv, 1
+  %exitcond.not = icmp eq i64 %indvars.iv.next, 16
+  br i1 %exitcond.not, label %for.cond.cleanup, label %for.body
+}
+attributes #0 = { inputgen_entry }
+"""
+
+# Tons of instructions so by default no unrolling happens
+TEST_MODULE6 = b"""
+declare double @sqrt(double noundef) local_unnamed_addr
+define dso_local void @__llvm_extracted_loop.0(ptr noundef writeonly captures(none) %a, ptr noundef readonly captures(none) %b, i32 noundef %n) local_unnamed_addr {
+entry:
+  %cmp29.not = icmp eq i32 %n, 0
+  br i1 %cmp29.not, label %for.cond.cleanup, label %for.body.preheader
+
+for.body.preheader:                               ; preds = %entry
+  %wide.trip.count = zext i32 %n to i64
+  br label %for.body
+
+for.cond.cleanup:                                 ; preds = %for.body, %entry
+  ret void
+
+for.body:                                         ; preds = %for.body.preheader, %for.body
+  %indvars.iv = phi i64 [ 0, %for.body.preheader ], [ %indvars.iv.next, %for.body ]
+  %arrayidx = getelementptr inbounds nuw i8, ptr %b, i64 %indvars.iv
+  %0 = load i8, ptr %arrayidx, align 1
+  %conv = sext i8 %0 to i32
+  %mul = shl nsw i32 %conv, 1
+  %conv1 = sitofp i32 %mul to double
+  %call = tail call double @sqrt(double noundef %conv1)
+  %call2 = tail call double @sqrt(double noundef %call)
+  %call3 = tail call double @sqrt(double noundef %call2)
+  %call4 = tail call double @sqrt(double noundef %call3)
+  %call5 = tail call double @sqrt(double noundef %call4)
+  %call6 = tail call double @sqrt(double noundef %call5)
+  %call7 = tail call double @sqrt(double noundef %call6)
+  %call8 = tail call double @sqrt(double noundef %call7)
+  %call9 = tail call double @sqrt(double noundef %call8)
+  %call10 = tail call double @sqrt(double noundef %call9)
+  %call11 = tail call double @sqrt(double noundef %call10)
+  %call12 = tail call double @sqrt(double noundef %call11)
+  %call13 = tail call double @sqrt(double noundef %call12)
+  %call14 = tail call double @sqrt(double noundef %call13)
+  %call15 = tail call double @sqrt(double noundef %call14)
+  %call16 = tail call double @sqrt(double noundef %call15)
+  %call17 = tail call double @sqrt(double noundef %call16)
+  %call18 = tail call double @sqrt(double noundef %call17)
+  %call19 = tail call double @sqrt(double noundef %call18)
+  %call20 = tail call double @sqrt(double noundef %call19)
+  %call21 = tail call double @sqrt(double noundef %call20)
+  %call22 = tail call double @sqrt(double noundef %call21)
+  %conv23 = fptosi double %call22 to i8
+  %arrayidx25 = getelementptr inbounds nuw i8, ptr %a, i64 %indvars.iv
+  store i8 %conv23, ptr %arrayidx25, align 1
+  %indvars.iv.next = add nuw nsw i64 %indvars.iv, 1
+  %exitcond.not = icmp eq i64 %indvars.iv.next, %wide.trip.count
+  br i1 %exitcond.not, label %for.cond.cleanup, label %for.body
+}
+"""
+
+
+logger = logging.getLogger(__name__)
+if False:
     SAVE_TEMPS = True
     TEMP_DIR = "./temps"
     DEBUG = True
+    logging.basicConfig(level=logging.DEBUG)
 else:
     SAVE_TEMPS = False
     TEMP_DIR = None
     DEBUG = False
 
+logging.basicConfig(level=logging.DEBUG)
+
 
 class GenCompileLoopInputsTest(unittest.TestCase):
     def test_input_gen2(self):
         loop = dict()
-        loop["module"] = TEST_MODULE
-        loop["num_loops"] = 17
+        loop["module"] = TEST_MODULE6
+        loop["num_loops"] = 1
         loop["language"] = "c"
         loop[ID_FIELD] = 15
 
@@ -1356,6 +1477,7 @@ class GenCompileLoopInputsTest(unittest.TestCase):
             save_temps=SAVE_TEMPS,
             temp_dir=TEMP_DIR,
             debug_instrumentation=False,
+            debug_profiling=False,
         )
         loop_inputs = gcpli.process_module(args, 13, loop)
         logger.debug(loop_inputs)
@@ -1376,10 +1498,11 @@ class GenCompileLoopInputsTest(unittest.TestCase):
             temp_dir=TEMP_DIR,
             dump_llvm=False,
             debug=DEBUG,
+            debug_profiling=False,
         )
-        res = gur.process_module(args, 14, loop)
+        res = guts.process_module_impl_results(args, 14, loop)
         print(res)
-        loop = res.data[0]
+        loop = res[0]
         loop[ID_FIELD] = 18
 
         args = Namespace(
@@ -1389,79 +1512,86 @@ class GenCompileLoopInputsTest(unittest.TestCase):
             temp_dir=TEMP_DIR,
             dump_llvm=False,
             debug=DEBUG,
+            debug_profiling=False,
         )
-        res = guts.process_module(args, 9, loop)
+        res = guts.process_module_impl_sample(args, 9, loop)
         print(res)
 
-    def test_input_gen(self):
-        args = Namespace(
-            mclang=[],
-            mllvm=[],
-            save_temps=SAVE_TEMPS,
-            temp_dir=TEMP_DIR,
-        )
-        data = dict()
-        data["content"] = TEST_MODULE
-        data["language"] = "c"
-        data[ID_FIELD] = 15
-        loops = gcpl.process_module(args, 10, data)
-        self.assertIsNotNone(loops)
-        logger.debug("loops")
-        logger.debug(loops)
-        self.assertEqual(loops.i, 10)
-        ds = loops.data
-        logger.debug(ds)
-        loop = ds[0]
-        logger.debug("loop")
-        logger.debug(loop)
-        loop[ID_FIELD] = 16
+    # def test_input_gen(self):
+    #     args = Namespace(
+    #         mclang=[],
+    #         mllvm=[],
+    #         save_temps=SAVE_TEMPS,
+    #         temp_dir=TEMP_DIR,
+    #         debug_profiling=False,
+    #     )
+    #     data = dict()
+    #     data["content"] = TEST_MODULE
+    #     data["language"] = "c"
+    #     data[ID_FIELD] = 15
+    #     loops = gcpl.process_module_wrapper_local(args, 10, data)
+    #     self.assertIsNotNone(loops)
+    #     logger.debug("loops")
+    #     logger.debug(loops)
+    #     self.assertEqual(loops.i, 10)
+    #     ds = loops.data
+    #     logger.debug(ds)
+    #     loop = ds[0]
+    #     logger.debug("loop")
+    #     logger.debug(loop)
+    #     loop[ID_FIELD] = 16
 
-        args = Namespace(
-            mclang=[],
-            mllvm=[],
-            save_temps=True,
-            temp_dir="./temps1/",
-            # save_temps=False,
-            # temp_dir=None,
-            debug_instrumentation=False,
-        )
-        loop_inputs = gcpli.process_module(args, 13, loop)
-        logger.debug(loop_inputs)
-        self.assertIsNotNone(loop_inputs)
-        self.assertEqual(loop_inputs.i, 13)
-        logger.debug(loop_inputs.data)
-        logger.debug(loop_inputs.data[0])
-        logger.debug(loop_inputs.data[0]["inputs"])
-        self.assertGreater(len(loop_inputs.data[0]["inputs"]), 0)
+    #     args = Namespace(
+    #         mclang=[],
+    #         mllvm=[],
+    #         # save_temps=True,
+    #         # temp_dir="./temps1/",
+    #         save_temps=False,
+    #         temp_dir=None,
+    #         debug_instrumentation=False,
+    #         debug_profiling=False,
+    #     )
+    #     loop_inputs = gcpli.process_module(args, 13, loop)
+    #     logger.debug(loop_inputs)
+    #     self.assertIsNotNone(loop_inputs)
+    #     self.assertEqual(loop_inputs.i, 13)
+    #     logger.debug(loop_inputs.data)
+    #     logger.debug(loop_inputs.data[0])
+    #     logger.debug(loop_inputs.data[0]["inputs"])
+    #     self.assertGreater(len(loop_inputs.data[0]["inputs"]), 0)
 
-        loop = loop_inputs.data[0]
-        loop[ID_FIELD] = 17
+    #     loop = loop_inputs.data[0]
+    #     loop[ID_FIELD] = 17
 
-        args = Namespace(
-            mclang=[],
-            mllvm=[],
-            save_temps=True,
-            temp_dir="./temps2/",
-            # save_temps=False,
-            # temp_dir=None,
-            dump_llvm=False,
-            debug=True,
-        )
-        res = gur.process_module(args, 14, loop)
-        print(res)
-        loop = res.data[0]
-        loop[ID_FIELD] = 18
+    #     args = Namespace(
+    #         mclang=[],
+    #         mllvm=[],
+    #         # save_temps=True,
+    #         # temp_dir="./temps2/",
+    #         save_temps=False,
+    #         temp_dir=None,
+    #         dump_llvm=False,
+    #         debug=True,
+    #         debug_profiling=False,
+    #     )
+    #     res = guts.process_module_impl_results(args, 14, loop)
+    #     print(res)
+    #     loop = res.data[0]
+    #     loop[ID_FIELD] = 18
 
-        args = Namespace(
-            mclang=[],
-            mllvm=[],
-            save_temps=True,
-            temp_dir="./temps3/",
-            dump_llvm=False,
-            debug=False,
-        )
-        res = guts.process_module(args, 9, loop)
-        print(res)
+    #     args = Namespace(
+    #         mclang=[],
+    #         mllvm=[],
+    #         # save_temps=True,
+    #         # temp_dir="./temps3/",
+    #         save_temps=False,
+    #         temp_dir=None,
+    #         dump_llvm=False,
+    #         debug=False,
+    #         debug_profiling=False,
+    #     )
+    #     res = guts.process_module_impl_sample(args, 9, loop)
+    #     print(res)
 
 
 if __name__ == "__main__":

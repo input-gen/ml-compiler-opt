@@ -8,6 +8,7 @@ from typing import List, Optional
 @dataclasses.dataclass(frozen=True)
 class UnrollDecisionTrainingSample:
     features: list
+    heuristic_factor: int
     advice: np.array
 
 
@@ -46,6 +47,7 @@ class UnrollFactorRuntimes:
 @dataclasses.dataclass(frozen=True)
 class UnrollDecisionRawSample:
     features: list
+    heuristic_factor: int
     # Benchmarking result for each input
     base_ufrts: UnrollFactorRuntimes
     # Benchmarking result for each input for each factor
