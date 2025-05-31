@@ -596,22 +596,28 @@ def generate_samples(decision_results, inputs: List[List], replay_options, args,
 
         return rtss
 
+    def get_udr_runtimes_non_checked(
+        ufr: UnrollFactorResult, action, is_baseline, maybe_non_zero_runtime=None, invalid_runtime=None
+    ):
+        logger.debug(f"Getting raw runtime for ufr action {ufr.action}, factor {ufr.factor}")
+        try:
+            return UnrollFactorRuntimes(
+                ufr.factor,
+                action,
+                get_module_runtimes(ufr.module, is_baseline, maybe_non_zero_runtime, invalid_runtime),
+            )
+        except InputGenError as e:
+            logger.debug(e)
+            return UnrollFactorRuntimes(
+                ufr.factor, True, [get_invalid_abr() for _ in range(num_inputs)]
+            )
+
     def get_udr_runtimes(ufr: UnrollFactorResult, maybe_non_zero_runtime=None, invalid_runtime=None):
         logger.debug(f"Getting runtime for ufr action {ufr.action}, factor {ufr.factor}")
         if ufr.action or ufr.factor == 1:
-            try:
-                return UnrollFactorRuntimes(
-                    ufr.factor,
-                    True,
-                    get_module_runtimes(
-                        ufr.module, ufr.factor == 1, maybe_non_zero_runtime, invalid_runtime
-                    ),
-                )
-            except InputGenError as e:
-                logger.debug(e)
-                return UnrollFactorRuntimes(
-                    ufr.factor, True, [get_invalid_abr() for _ in range(num_inputs)]
-                )
+            return get_udr_runtimes_non_checked(
+                ufr, True, ufr.factor == 1, maybe_non_zero_runtime, invalid_runtime
+            )
         else:
             return UnrollFactorRuntimes(
                 ufr.factor, False, [get_invalid_abr() for _ in range(num_inputs)]
@@ -665,7 +671,9 @@ def generate_samples(decision_results, inputs: List[List], replay_options, args,
         assert runtimes[0].factor == 1, "Base does not have unroll factor == 1"
         assert runtimes[0].action, "Action has to be true on the base"
 
-        return UnrollDecisionRawSample(x, ud.heuristic_factor, runtimes[0], runtimes[1:])
+        default_ufrt = get_udr_runtimes_non_checked(ud.default, ud.default.action, False)
+
+        return UnrollDecisionRawSample(x, runtimes[0], runtimes[1:], default_ufrt)
 
     raw_samples = filter_none(map(get_ud_raw_sample, decision_results))
     if raw:

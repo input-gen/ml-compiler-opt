@@ -106,15 +106,15 @@ def make_response_for_factor(factor: int):
 @dataclasses.dataclass(frozen=True)
 class UnrollFactorResult:
     factor: int
-    action: bool
+    action: int
     module: bytes
 
 
 @dataclasses.dataclass(frozen=True)
 class UnrollDecision:
     features: List
-    heuristic_factor: int
     results: List[UnrollFactorResult]
+    default: UnrollFactorResult
 
 
 @dataclasses.dataclass(frozen=True)
@@ -297,7 +297,42 @@ class UnrollCompilerHost:
 
             if cur_status == "success":
                 # If we did not break the above loop
-                ud = UnrollDecision(self.features[decision], heuristic, decision_results)
+
+                # Get the module with instrumented default heuristic decision
+                self.cur_action = None
+                self.cur_heuristic = None
+                cr = self.compile_once(
+                    mod,
+                    on_features=lambda index, features: (),
+                    on_heuristic=(
+                        lambda index, heuristic: self.on_heuristic_save(index, heuristic)
+                        if index == decision
+                        else None
+                    ),
+                    on_action=(
+                        lambda index, action: self.on_action_save(index, action)
+                        if index == decision
+                        else None
+                    ),
+                    get_instrument_response=(
+                        lambda index: (
+                            "__mlgo_unrolled_loop_begin",
+                            "__mlgo_unrolled_loop_end",
+                        )
+                        if index == decision
+                        else None
+                    ),
+                    get_response=lambda index, tensor, heuristic: make_response_for_factor(heuristic),
+                )
+                assert self.cur_action is not None
+                assert self.cur_heuristic is not None
+                assert heuristic == self.cur_heuristic
+
+                ud = UnrollDecision(
+                    self.features[decision],
+                    decision_results,
+                    UnrollFactorResult(heuristic, self.cur_action, cr.module),
+                )
                 logger.debug(pprint.pformat(ud))
                 logger.debug("Got result:")
                 yield ud

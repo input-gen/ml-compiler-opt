@@ -39,7 +39,7 @@ def get_zero_rt_abr():
 @dataclasses.dataclass(frozen=True)
 class UnrollFactorRuntimes:
     factor: int
-    action: bool
+    action: int
     # Benchmarking result for each input
     benchmarking_results: List[AdaptiveBenchmarkingResult]
 
@@ -47,8 +47,9 @@ class UnrollFactorRuntimes:
 @dataclasses.dataclass(frozen=True)
 class UnrollDecisionRawSample:
     features: list
-    heuristic_factor: int
     # Benchmarking result for each input
     base_ufrts: UnrollFactorRuntimes
     # Benchmarking result for each input for each factor
     factors_ufrts: List[UnrollFactorRuntimes]
+    # Benchmarking result for default decision
+    default_ufrts: UnrollFactorRuntimes
