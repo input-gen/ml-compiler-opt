@@ -310,14 +310,21 @@ class InputGenUtils:
         self.save_temp(mod, "instrumented_no_opt_replay_module.bc", binary=True)
         return mod
 
-    def get_executable_for_replay_no_opt(self, mod, path):
-        with tempfile.NamedTemporaryFile(dir=self.working_dir, suffix=".bc", delete=False) as f:
-            f.write(mod)
+    def get_obj_from_mod(self, mod, optlevel):
+        cmd = ["llc", "-O" + str(optlevel), "-filetype=obj", "-relocation-model=pic", "-o", "-"]
+        obj, _ = self.get_output(
+            cmd, mod, ExecFailTy=InputGenInstrumentationError, timeout=self.get_compile_timeout()
+        )
+        return obj
+
+    def get_executable_for_replay_no_opt(self, obj, path):
+        with tempfile.NamedTemporaryFile(dir=self.working_dir, suffix=".o", delete=False) as f:
+            f.write(obj)
             f.flush()
             cmd = ["clang++", f.name, "-linputgen.replay", "-lpthread", "-o", path] + self.mclang
             exe, _ = self.get_output(
                 cmd,
-                mod,
+                None,
                 ExecFailTy=InputGenInstrumentationError,
                 timeout=self.get_compile_timeout(),
             )
@@ -326,15 +333,20 @@ class InputGenUtils:
 class InputGenReplay(InputGenUtils):
     def __init__(
         self,
-        mod,
+        mod=None,
         working_dir=None,
         save_temps=False,
         mclang=None,
         mllvm=None,
         temp_dir=None,
         compile_timeout=None,
+        llc_opt_level=3,
+        obj=None,
     ):
         self.mod = mod
+        self.obj = obj
+
+        self.llc_opt_level = llc_opt_level
 
         self.num_entries = None
         self.preparation_done = False
@@ -360,7 +372,11 @@ class InputGenReplay(InputGenUtils):
         assert not self.preparation_done
         self.save_temp(self.mod, "original_module", binary=True)
         self.repl_exec_path = os.path.join(self.working_dir, "repl")
-        self.repl_exec = self.get_executable_for_replay_no_opt(self.mod, self.repl_exec_path)
+        if self.obj is None:
+            if self.mod is None:
+                raise InputGenError("No module or object specified")
+            self.obj = self.get_obj_from_mod(self.mod, self.llc_opt_level)
+        self.repl_exec = self.get_executable_for_replay_no_opt(self.obj, self.repl_exec_path)
 
         cmd = [self.repl_exec_path]
         _, errs = self.get_output(cmd, allow_fail=True, timeout=self.get_compile_timeout())
