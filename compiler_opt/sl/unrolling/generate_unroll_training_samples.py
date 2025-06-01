@@ -523,7 +523,8 @@ def get_ud_sample_from_raw(
 
     assert not any(speedups == np.nan)
 
-    return UnrollDecisionTrainingSample(udrs.features, udrs.heuristic_factor, speedups)
+    # TODO we need to also get the heuristic speedup
+    return UnrollDecisionTrainingSample(udrs.features, udrs.heuristic_factor, np.nan, speedups)
 
 
 def filter_none(l):

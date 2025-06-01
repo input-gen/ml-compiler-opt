@@ -9,6 +9,7 @@ from typing import List, Optional
 class UnrollDecisionTrainingSample:
     features: list
     heuristic_factor: int
+    heuristic_speedup: float
     advice: np.array
 
 
