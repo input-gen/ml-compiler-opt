@@ -437,6 +437,8 @@ def reduce_abr(abr: AdaptiveBenchmarkingResult, confidence, relative_ci_threshol
 
 LOW_RUNTIME_CUTOFF = 1000
 
+ENABLE_ASSERT = True
+
 
 def get_ud_sample_from_raw(
     udrs,
@@ -447,29 +449,41 @@ def get_ud_sample_from_raw(
     low_runtime_cutoff=LOW_RUNTIME_CUTOFF,
     logger=logger,
 ):
-    all_ufrts = [udrs.base_ufrts] + udrs.factors_ufrts
+    all_ufrts = [udrs.base_ufrts] + udrs.factors_ufrts + [udrs.default_ufrts]
+
+    last_i = len(all_ufrts) - 1
 
     rts = {}
     for i, ufrt in enumerate(all_ufrts):
-        assert ufrt.factor == UNROLL_FACTOR_OFFSET + i - 1
-        if ufrt.action:
+        if last_i != i:
+            assert ufrt.factor == UNROLL_FACTOR_OFFSET + i - 1
+        if ufrt.action or last_i == i:
             factor_inputs_rt = list(
                 map(
                     lambda x: reduce_abr_min_ci(x, confidence),
                     ufrt.benchmarking_results,
                 )
             )
+            # Encode "default" as factor = 0
+            key = ufrt.factor if i != last_i else 0
             rts[ufrt.factor] = factor_inputs_rt
     assert len(rts) > 0
     assert 1 in rts.keys()
     frames = {factor: pd.DataFrame(inputs) for factor, inputs in rts.items()}
 
-    # Inputs are the rows, and the factors are the columns.
+    if False:
+        if set(range(0, MAX_UNROLL_FACTOR + 1)) == set(rts.keys()):
+            logger.debug(f"Failed: not all factors had action.")
+            return None
+
+    # Inputs are the rows, and the factors are the columns. there are multiple
+    # columns per factor for the different stats (median, ci, etc).
     df = pd.concat(frames, axis=1)
     df.columns.names = ["factor", "stat"]
 
     # Drop any inputs where we have zero or nan runtime.
     medians = df.xs("median", axis=1, level="stat")
+    medians = medians.drop(columns=0, errors="ignore")
     mask = (medians == 0) | (medians.isna())
     df = df[~mask.any(axis=1)]
     if len(df) == 0:
@@ -478,10 +492,12 @@ def get_ud_sample_from_raw(
 
     # Drop any inputs where the base runtime is too low
     medians = df.xs("median", axis=1, level="stat")
+    medians = medians.drop(columns=0, errors="ignore")
     mask = medians[1] < low_runtime_cutoff
     df = df[~mask]
 
     cis = df.xs("ci", axis=1, level="stat")
+    cis = cis.drop(columns=0, errors="ignore")
     mask_per_sample = (cis < relative_ci_threshold_per_sample).any(axis=1)
     cis_mean = cis.mean(axis=1)
     mask_mean = cis_mean < relative_ci_threshold_mean
@@ -493,26 +509,30 @@ def get_ud_sample_from_raw(
     # Grab only the medians
     df = df.xs("median", axis=1, level="stat")
 
-    assert not any(df.isna().any(axis=1))
+    if ENABLE_ASSERT:
+        assert not any(df.drop(columns=0, errors="ignore").isna().any(axis=1))
 
     # Get the speedups relative to factor 1 in each input.
     for factor in rts.keys():
         if factor != 1:
             df[factor] = df[1] / df[factor]
 
-    assert not any(df.isna().any(axis=1))
+    if ENABLE_ASSERT:
+        assert not any(df.drop(columns=0, errors="ignore").isna().any(axis=1))
 
     # Encode inability to unroll (action = False) as speedup = 0.
     for factor in {i for i in range(UNROLL_FACTOR_OFFSET, MAX_UNROLL_FACTOR + 1)} - rts.keys():
         df[factor] = 0.0
 
-    assert not any(df.isna().any(axis=1))
+    if ENABLE_ASSERT:
+        assert not any(df.drop(columns=0, errors="ignore").isna().any(axis=1))
 
-    # Drop the baseline
+    # Drop the baseline runtime
     baseline = df[1]
     df.drop(1, axis=1, inplace=True)
 
-    assert not any(df.isna().any(axis=1))
+    if ENABLE_ASSERT:
+        assert not any(df.drop(columns=0, errors="ignore").isna().any(axis=1))
 
     # Get the geomean speedup for each factor across all inputs.
     if weighted:
@@ -521,10 +541,15 @@ def get_ud_sample_from_raw(
     else:
         speedups = df.apply(lambda col: np.exp(np.mean(np.log(col))), axis=0)
 
+    default_speedup = speedups.get(0, np.nan)
+    speedups.drop(0, inplace=True, errors="ignore")
+
     assert not any(speedups == np.nan)
 
     # TODO we need to also get the heuristic speedup
-    return UnrollDecisionTrainingSample(udrs.features, udrs.heuristic_factor, np.nan, speedups)
+    return UnrollDecisionTrainingSample(
+        udrs.features, udrs.default_ufrts.factor, default_speedup, speedups
+    )
 
 
 def filter_none(l):

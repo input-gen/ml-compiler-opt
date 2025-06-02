@@ -61,6 +61,7 @@ def process_module(args, idx, data):
             relative_ci_threshold_per_sample=args.relative_ci_threshold_per_sample,
             relative_ci_threshold_mean=args.relative_ci_threshold_mean,
             weighted=args.weighted,
+            low_runtime_cutoff=args.low_runtime_cutoff,
         )
         if samples is not None:
             samples.append(sample)

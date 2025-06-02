@@ -87,6 +87,7 @@ def convert_data_to_df(
 
     all_features = [[] for name, ty in flattened_features_spec]
     all_advice = [[] for name, ty in flattened_advice_spec]
+    all_default = []
 
     for sample in samples:
         if isinstance(sample, UnrollDecisionRawSample):
@@ -107,6 +108,7 @@ def convert_data_to_df(
             l.append(feature)
         for advice, l in zip(sample.advice, all_advice):
             l.append(advice)
+        all_default.append(sample.heuristic_speedup)
 
     all_features = {
         name: pandas.Series(data=l, dtype=ty)
@@ -116,11 +118,13 @@ def convert_data_to_df(
         name: pandas.Series(data=l, dtype=ty)
         for (name, ty), l in zip(flattened_advice_spec, all_advice)
     }
+    all_default = {"default_decision": pandas.Series(data=all_default, dtype=float)}
 
     feature_df = pandas.DataFrame(all_features)
     advice_df = pandas.DataFrame(all_advice)
+    default_df = pandas.DataFrame(all_default)
 
-    df = pandas.concat([feature_df, advice_df], axis=1)
+    df = pandas.concat([feature_df, advice_df, default_df], axis=1)
     logger.debug("Intermediate df")
     logger.debug(df)
     return df
