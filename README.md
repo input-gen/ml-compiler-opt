@@ -19,9 +19,9 @@ make install
 Baseline cmake configuration for the llvm installation:
 
 ``` 
-cmake $LLVM_PROJECT_ROOT/llvm -DCMAKE_ENABLE_PROJECTS="clang;lld" -DCMAKE_ENABLE_RUNTIMES="compiler-rt" -DCOMPILER_RT_BUILD_INPUTGEN="ON" -DCMAKE_BUILD_TYPE=Release
+cmake $LLVM_PROJECT_ROOT/llvm -DLLVM_ENABLE_PROJECTS="clang;lld" -DLLVM_ENABLE_RUNTIMES="compiler-rt" -DCOMPILER_RT_BUILD_INPUTGEN="ON" -DCMAKE_BUILD_TYPE=Release
 ```
-These options are required: `-DCMAKE_ENABLE_RUNTIMES="compiler-rt" -DCOMPILER_RT_BUILD_INPUTGEN="ON"`
+These options are required: `-DLLVM_ENABLE_RUNTIMES="compiler-rt" -DCOMPILER_RT_BUILD_INPUTGEN="ON"`
 
 See the following for more details on building LLVM:  https://llvm.org/docs/CMake.html
 
