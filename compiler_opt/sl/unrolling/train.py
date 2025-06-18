@@ -165,11 +165,16 @@ def get_df(
 
 def get_X_Y_from_df(unroll_df):
     cols = list(unroll_df.columns)
+    XY_split = None
+    YD_split = None
     for i, col in enumerate(cols):
-        if "unrolling_decision" in col:
-            break
-    unroll_features = unroll_df[cols[:i]]
-    unroll_labels = unroll_df[cols[i:]]
+        if XY_split is None and "unrolling_decision" in col:
+            XY_split = i
+        if "default_decision" == col:
+            assert YD_split is None
+            YD_split = i
+    unroll_features = unroll_df[cols[:XY_split]]
+    unroll_labels = unroll_df[cols[XY_split:YD_split]]
     logger.debug(unroll_features.columns)
     logger.debug(unroll_labels.columns)
     return unroll_features, unroll_labels
@@ -181,7 +186,7 @@ def get_X_Y(dataset):
     return get_X_Y_from_df(unroll_df)
 
 
-def split(X, Y, ratio=0.8):
+def split(X, Y, ratio=0.9):
     assert len(Y.columns) == ADVICE_TENSOR_LEN
 
     split = int(len(X.index) * ratio)
